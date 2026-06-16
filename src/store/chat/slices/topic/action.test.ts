@@ -2139,6 +2139,7 @@ describe('topic action', () => {
       });
 
       expect(createTopicSpy).toHaveBeenCalledWith({
+        metadata: { model: 'deepseek-v4-pro', provider: 'deepseek' },
         sessionId: activeAgentId,
         messages: messages.map((m) => m.id),
         title: 'defaultTitle',

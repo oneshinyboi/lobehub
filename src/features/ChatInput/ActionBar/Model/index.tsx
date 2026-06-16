@@ -3,13 +3,11 @@ import { Center, Tooltip } from '@lobehub/ui';
 import { createStaticStyles, cx } from 'antd-style';
 import { memo, useCallback } from 'react';
 
-import { useBusinessModelModeConfig } from '@/business/client/hooks/useBusinessAgentMode';
 import ModelSwitchPanel from '@/features/ModelSwitchPanel';
 import { usePermission } from '@/hooks/usePermission';
-import { useAgentStore } from '@/store/agent';
-import { agentByIdSelectors } from '@/store/agent/selectors';
 
 import { useAgentId } from '../../hooks/useAgentId';
+import { useTopicScopedModel } from '../../hooks/useTopicScopedModel';
 import { useActionBarContext } from '../context';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -53,20 +51,15 @@ const ModelSwitch = memo(() => {
   const { allowed: canCreateContent, reason } = usePermission('create_content');
 
   const agentId = useAgentId();
-  const [model, provider, updateAgentConfigById] = useAgentStore((s) => [
-    agentByIdSelectors.getAgentModelById(agentId)(s),
-    agentByIdSelectors.getAgentModelProviderById(agentId)(s),
-    s.updateAgentConfigById,
-  ]);
-  const applyBusinessModelModeConfig = useBusinessModelModeConfig();
+  const { model, provider, switchModel } = useTopicScopedModel(agentId);
 
   const handleModelChange = useCallback(
     async (params: { model: string; provider: string }) => {
       if (!canCreateContent) return;
 
-      await updateAgentConfigById(agentId, applyBusinessModelModeConfig(params));
+      await switchModel(params);
     },
-    [agentId, applyBusinessModelModeConfig, canCreateContent, updateAgentConfigById],
+    [canCreateContent, switchModel],
   );
 
   const trigger = (

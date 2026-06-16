@@ -83,6 +83,30 @@ const currentActiveTopicSummary = (s: ChatStoreState): ChatTopicSummary | undefi
 const currentTopicMetadata = (s: ChatStoreState) => currentActiveTopic(s)?.metadata;
 
 /**
+ * Get the model/provider pinned to a specific topic (snapshotted on creation,
+ * updated when the user switches model while the topic is active).
+ * Returns undefined when the topic has no model recorded (e.g. legacy topics),
+ * in which case callers should fall back to the agent default.
+ */
+const getTopicModelById =
+  (id: string) =>
+  (s: ChatStoreState): { model: string; provider: string } | undefined => {
+    const metadata = getTopicById(id)(s)?.metadata;
+    if (!metadata?.model) return undefined;
+
+    return { model: metadata.model, provider: metadata.provider || '' };
+  };
+
+/**
+ * The model/provider pinned to the active topic, or undefined when there is no
+ * active topic or it has no model recorded.
+ */
+const activeTopicModel = (s: ChatStoreState): { model: string; provider: string } | undefined => {
+  if (!s.activeTopicId) return undefined;
+  return getTopicModelById(s.activeTopicId)(s);
+};
+
+/**
  * Get current active topic's working directory.
  * On desktop: local filesystem path.
  * On web (cloud): primary GitHub repo URL (repos[0]), or workingDirectory if set directly.
@@ -268,6 +292,7 @@ const agentTopicsViewLoadMoreError = (s: ChatStoreState): unknown =>
   agentTopicsViewData(s)?.loadMoreError;
 
 export const topicSelectors = {
+  activeTopicModel,
   agentTopicsViewHasMore,
   agentTopicsViewIsLoadingMore,
   agentTopicsViewLoadMoreError,
@@ -285,6 +310,7 @@ export const topicSelectors = {
   displayTopics,
   displayTopicsForSidebar,
   getTopicById,
+  getTopicModelById,
   getTopicsByAgentId,
   groupedTopicsForSidebar,
   groupedTopicsSelector,

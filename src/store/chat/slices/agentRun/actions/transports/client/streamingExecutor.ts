@@ -161,13 +161,29 @@ export class StreamingExecutorActionImpl {
     // This ensures runtime plugins (e.g., 'lobe-agent-builder' for Agent Builder) are included
     // - isSubAgent: filters out lobe-agent tool to prevent nested sub-agent creation
     // - disableTools: clears all plugins for broadcast scenarios
-    const agentConfig = resolveAgentConfig({
+    const resolvedAgentConfig = resolveAgentConfig({
       agentId: effectiveAgentId || '',
       disableTools, // Clear plugins for broadcast scenarios
       groupId, // Pass groupId for supervisor detection
       isSubAgent, // Filter out lobe-agent in sub-agent context
       scope, // Pass scope from operation context
     });
+
+    // Topic-scoped model: a topic snapshots the model it was created with and
+    // remembers model switches made while it is active. When the topic for this
+    // run has a model recorded, it overrides the agent default so the whole
+    // model→topic chain (tools, context window, generation) uses the topic model.
+    const topicModel = topicId ? topicSelectors.getTopicModelById(topicId)(this.#get()) : undefined;
+    const agentConfig = topicModel
+      ? {
+          ...resolvedAgentConfig,
+          agentConfig: {
+            ...resolvedAgentConfig.agentConfig,
+            model: topicModel.model,
+            provider: topicModel.provider,
+          },
+        }
+      : resolvedAgentConfig;
 
     const { agentConfig: agentConfigData, plugins: pluginIds } = agentConfig;
     const selectedToolIds = initialContext?.initialContext?.selectedTools?.map(
