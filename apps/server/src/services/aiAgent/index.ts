@@ -1433,30 +1433,39 @@ export class AiAgentService {
     let topicId = appContext?.topicId;
     const isNewTopic = !topicId;
     const topicBoundDeviceId = requestedDeviceId;
+
+    // Effective model/provider for this run. Defaults to the agent config, but a
+    // topic pins its own model — snapshotted into metadata on creation, and
+    // honored below when reusing a topic whose model was switched while active.
+    // This keeps the Gateway/cloud path in sync with the client local path (see
+    // streamingExecutor + topicSelectors.getTopicModelById).
+    let model = agentConfig.model!;
+    let provider = agentConfig.provider!;
+
     if (!topicId) {
       if (resume) {
         throw new Error('Resume mode requires the parent message to belong to a topic');
       }
 
-      // Prepare metadata with cronJobId, taskId, botContext, bound device, and any
-      // client-supplied initial metadata (e.g. repos selected before first message).
+      // Prepare metadata with the model snapshot plus cronJobId, taskId,
+      // botContext, bound device, and any client-supplied initial metadata
+      // (e.g. repos selected before first message).
       const initialTopicMeta = appContext?.initialTopicMetadata;
-      const metadata =
-        cronJobId || operationTaskId || botContext || requestedDeviceId || initialTopicMeta
-          ? {
-              bot: botContext,
-              boundDeviceId: requestedDeviceId,
-              cronJobId: cronJobId || undefined,
-              taskId: operationTaskId,
-              ...(initialTopicMeta?.repos && { repos: initialTopicMeta.repos }),
-              ...(initialTopicMeta?.workingDirectory && {
-                workingDirectory: initialTopicMeta.workingDirectory,
-              }),
-              ...(initialTopicMeta?.workingDirectoryConfig && {
-                workingDirectoryConfig: initialTopicMeta.workingDirectoryConfig,
-              }),
-            }
-          : undefined;
+      const metadata = {
+        bot: botContext,
+        boundDeviceId: requestedDeviceId,
+        cronJobId: cronJobId || undefined,
+        model,
+        provider,
+        taskId: operationTaskId,
+        ...(initialTopicMeta?.repos && { repos: initialTopicMeta.repos }),
+        ...(initialTopicMeta?.workingDirectory && {
+          workingDirectory: initialTopicMeta.workingDirectory,
+        }),
+        ...(initialTopicMeta?.workingDirectoryConfig && {
+          workingDirectoryConfig: initialTopicMeta.workingDirectoryConfig,
+        }),
+      };
 
       const fallbackTitleSource = markdownToTxt(prompt);
       const newTopic = await this.topicModel.create({
@@ -1486,13 +1495,24 @@ export class AiAgentService {
       );
     } else {
       log('execAgent: reusing existing topic %s', topicId);
+
+      // Honor a topic-pinned model (snapshotted on creation, updated when the
+      // user switched model while the topic was active) over the agent default.
+      const existingTopic = await this.topicModel.findById(topicId);
+      const pinnedModel = existingTopic?.metadata?.model;
+      if (pinnedModel) {
+        model = pinnedModel;
+        provider = existingTopic?.metadata?.provider || provider;
+        log(
+          'execAgent: using topic-pinned model=%s provider=%s for topic %s',
+          model,
+          provider,
+          topicId,
+        );
+      }
     }
 
     await throwIfExecutionAborted('topic setup');
-
-    // Extract model and provider from agent config
-    const model = agentConfig.model!;
-    const provider = agentConfig.provider!;
 
     // Resolve device-tool access ONCE per turn, BEFORE the hetero early exit —
     // hetero dispatch routes the whole run to a user machine, so it must honour
