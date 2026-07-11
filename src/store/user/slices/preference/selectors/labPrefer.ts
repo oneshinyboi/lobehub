@@ -13,6 +13,8 @@ export const labPreferSelectors = {
   enableFleet: (s: UserState): boolean => s.preference.lab?.enableFleet ?? false,
   enableFoldFinishedTurn: (s: UserState): boolean =>
     s.preference.lab?.enableFoldFinishedTurn ?? false,
+  enableHeteroSessionImport: (s: UserState): boolean =>
+    s.preference.lab?.enableHeteroSessionImport ?? false,
   enableImessage: (s: UserState): boolean => s.preference.lab?.enableImessage ?? false,
   enableInAppBrowser: (s: UserState): boolean => s.preference.lab?.enableInAppBrowser ?? false,
   enableInputMarkdown: (s: UserState): boolean =>

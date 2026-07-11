@@ -17,6 +17,9 @@ export default {
   'features.foldFinishedTurn.desc':
     'Collapse the process (reasoning and tool calls) of finished agent turns under a "Processed" header once the final answer is visible. Click to expand the process.',
   'features.foldFinishedTurn.title': 'Fold Finished Turns',
+  'features.heteroSessionImport.desc':
+    'Add an "Import Local Agent Sessions" entry to the topic list menu: scan local Claude Code / Codex CLI transcripts and import them as topics, with incremental sync on re-import.',
+  'features.heteroSessionImport.title': 'Local Agent Session Import',
   'features.imessage.desc':
     'Connect agents to iMessage through the local LobeHub Desktop BlueBubbles bridge.',
   'features.imessage.title': 'iMessage Channel',

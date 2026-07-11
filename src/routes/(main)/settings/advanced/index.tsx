@@ -54,6 +54,7 @@ const Page = memo(() => {
     enableImessage,
     enableFleet,
     enableClaudeCodeSdk,
+    enableHeteroSessionImport,
     enableFoldFinishedTurn,
     enableMessageTextSelectionActions,
     enableInAppBrowser,
@@ -66,6 +67,7 @@ const Page = memo(() => {
     labPreferSelectors.enableImessage(s),
     labPreferSelectors.enableFleet(s),
     labPreferSelectors.enableClaudeCodeSdk(s),
+    labPreferSelectors.enableHeteroSessionImport(s),
     labPreferSelectors.enableFoldFinishedTurn(s),
     labPreferSelectors.enableMessageTextSelectionActions(s),
     labPreferSelectors.enableInAppBrowser(s),
@@ -254,6 +256,21 @@ const Page = memo(() => {
             className: styles.labItem,
             desc: tLabs('features.claudeCodeSdk.desc'),
             label: tLabs('features.claudeCodeSdk.title'),
+            minWidth: undefined,
+          } satisfies FormItemProps,
+          // rides on the Claude Code hetero-agent stack: scans local CLI
+          // transcripts via the Electron main process — desktop only
+          {
+            children: (
+              <Switch
+                checked={enableHeteroSessionImport}
+                loading={!isPreferenceInit}
+                onChange={(checked: boolean) => updateLab({ enableHeteroSessionImport: checked })}
+              />
+            ),
+            className: styles.labItem,
+            desc: tLabs('features.heteroSessionImport.desc'),
+            label: tLabs('features.heteroSessionImport.title'),
             minWidth: undefined,
           } satisfies FormItemProps,
         ]
