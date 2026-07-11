@@ -1456,9 +1456,16 @@ table oidc_clients {
   policy_uri text
   tos_uri text
   is_first_party boolean [default: false]
+  owner_id text
+  enabled boolean [not null, default: true]
+  last_used_at "timestamp with time zone"
   accessed_at "timestamp with time zone" [not null, default: `now()`]
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    owner_id [name: 'oidc_clients_owner_id_idx']
+  }
 }
 
 table oidc_consents {

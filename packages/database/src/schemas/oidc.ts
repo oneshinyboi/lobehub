@@ -132,24 +132,33 @@ export const oidcGrants = pgTable(
  * OIDC client configuration
  * Stores OIDC client configuration information
  */
-export const oidcClients = pgTable('oidc_clients', {
-  id: varchar('id', { length: 255 }).primaryKey(), // client_id
-  name: text('name').notNull(),
-  description: text('description'),
-  clientSecret: varchar('client_secret', { length: 255 }), // Can be null for public clients
-  redirectUris: text('redirect_uris').array().notNull(),
-  grants: text('grants').array().notNull(),
-  responseTypes: text('response_types').array().notNull(),
-  scopes: text('scopes').array().notNull(),
-  tokenEndpointAuthMethod: varchar('token_endpoint_auth_method', { length: 20 }),
-  applicationType: varchar('application_type', { length: 20 }),
-  clientUri: text('client_uri'),
-  logoUri: text('logo_uri'),
-  policyUri: text('policy_uri'),
-  tosUri: text('tos_uri'),
-  isFirstParty: boolean('is_first_party').default(false),
-  ...timestamps,
-});
+export const oidcClients = pgTable(
+  'oidc_clients',
+  {
+    id: varchar('id', { length: 255 }).primaryKey(), // client_id
+    name: text('name').notNull(),
+    description: text('description'),
+    clientSecret: varchar('client_secret', { length: 255 }), // Can be null for public clients
+    redirectUris: text('redirect_uris').array().notNull(),
+    grants: text('grants').array().notNull(),
+    responseTypes: text('response_types').array().notNull(),
+    scopes: text('scopes').array().notNull(),
+    tokenEndpointAuthMethod: varchar('token_endpoint_auth_method', { length: 20 }),
+    applicationType: varchar('application_type', { length: 20 }),
+    clientUri: text('client_uri'),
+    logoUri: text('logo_uri'),
+    policyUri: text('policy_uri'),
+    tosUri: text('tos_uri'),
+    isFirstParty: boolean('is_first_party').default(false),
+    ownerId: text('owner_id').references(() => users.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull().default(true),
+    lastUsedAt: timestamptz('last_used_at'),
+    ...timestamps,
+  },
+  (t) => ({
+    ownerIdIdx: index('oidc_clients_owner_id_idx').on(t.ownerId),
+  }),
+);
 
 /**
  * OIDC session
