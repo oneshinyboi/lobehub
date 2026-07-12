@@ -207,7 +207,9 @@ const Content = memo<ContentProps>(({ agentId }) => {
         state = { ok: false };
       }
       setProgress((prev) => ({ ...prev, [sessionId]: state }));
-      if (state.ok) refreshTopic();
+      // the main import loop refreshes once it finishes; a retry is its own
+      // terminal event, so it has to refresh the topic list itself
+      if (typeof state === 'object' && state.ok) refreshTopic();
     },
     [allSessions, importOne, refreshTopic],
   );

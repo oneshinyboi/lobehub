@@ -26,12 +26,41 @@ export interface HeteroSessionImportToolCall {
   type: 'default';
 }
 
+/**
+ * An image embedded in the source transcript (base64), and its file-store
+ * reference once uploaded.
+ *
+ * Transcripts inline screenshots as base64 — a single one is routinely several
+ * MB. They are uploaded by the runtime that read the transcript (Electron main,
+ * the only place holding file-store credentials) BEFORE the payload crosses
+ * tRPC, so `data` never reaches the server. Mirrors `HeterogeneousToolResultImage`
+ * of the live spawn path, which `pluginState.images` is already typed as.
+ */
+export interface HeteroSessionImportImage {
+  /** base64 payload — parser output only; stripped once uploaded */
+  data?: string;
+  /** file record id after upload */
+  fileId?: string;
+  /** IANA media type, e.g. `image/png` */
+  mediaType: string;
+  /** remote URL after upload */
+  url?: string;
+}
+
 export interface HeteroSessionImportMessage {
   /** deterministic id derived from the source transcript, unique within the user scope */
   clientId: string;
   content: string;
   /** ISO timestamp from the source transcript */
   createdAt?: string;
+  /** uploaded image/file records to attach to this message (`messages_files`) */
+  fileIds?: string[];
+  /**
+   * Images embedded in the source record, base64. Produced by the parsers and
+   * consumed in-process by the uploader; deliberately absent from the zod schema
+   * so it can never cross the tRPC boundary — see {@link HeteroSessionImportImage}.
+   */
+  images?: HeteroSessionImportImage[];
   metadata?: Record<string, any>;
   model?: string;
   /** clientId of the parent message (conversation chain) */
@@ -58,7 +87,19 @@ export interface HeteroSessionImportThread {
   /** deterministic id derived from the source transcript */
   clientId: string;
   messages: HeteroSessionImportMessage[];
-  /** clientId of the main-chain message this thread hangs on (e.g. the Task tool message) */
+  /**
+   * Thread metadata. `sourceToolCallId` is LOAD-BEARING: the Claude Code `Agent`
+   * tool render finds its subagent conversation by matching a topic thread's
+   * `metadata.sourceToolCallId` against the rendered tool call's id. Without it
+   * the thread exists but never expands under the tool call that spawned it.
+   */
+  metadata?: {
+    /** `tool_use.id` of the `Agent` call that spawned this subagent */
+    sourceToolCallId?: string;
+    /** CC subagent type, e.g. `Explore` */
+    subagentType?: string;
+  } & Record<string, any>;
+  /** clientId of the main-chain assistant message that emitted the spawning tool call */
   sourceMessageClientId?: string;
   status?: 'active' | 'completed' | 'failed';
   title?: string;
@@ -170,6 +211,11 @@ export const heteroSessionImportMessageSchema = z.object({
   clientId: z.string(),
   content: z.string(),
   createdAt: z.string().optional(),
+  // NOTE: `images` is intentionally NOT here. The uploader replaces it with
+  // `fileIds` before the payload leaves the process that read the transcript,
+  // and zod stripping the key is the backstop that keeps multi-MB base64 out of
+  // the request body. Adding it would defeat that.
+  fileIds: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).optional(),
   model: z.string().optional(),
   parentClientId: z.string().nullish(),
@@ -192,6 +238,7 @@ export const heteroSessionImportMessageSchema = z.object({
 
 export const heteroSessionImportThreadSchema = z.object({
   clientId: z.string(),
+  metadata: z.record(z.string(), z.any()).optional(),
   messages: z.array(heteroSessionImportMessageSchema),
   sourceMessageClientId: z.string().optional(),
   status: z.enum(['active', 'completed', 'failed']).optional(),

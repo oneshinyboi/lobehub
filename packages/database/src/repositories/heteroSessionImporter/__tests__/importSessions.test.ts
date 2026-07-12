@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getTestDB } from '../../../core/getTestDB';
 import {
   agents,
+  files,
   messagePlugins,
   messages,
+  messagesFiles,
   threads,
   topics,
   users,
@@ -16,6 +18,7 @@ import type { LobeChatDatabase } from '../../../type';
 import { HeteroSessionImporterRepo } from '../index';
 
 const userId = 'session-importer-user';
+const otherUserId = 'session-importer-other-user';
 const agentId = 'session-importer-agent';
 let serverDB: LobeChatDatabase;
 
@@ -82,7 +85,7 @@ describe('HeteroSessionImporterRepo.importSessions', () => {
     serverDB = await getTestDB();
     await serverDB.delete(users);
     await serverDB.transaction(async (tx) => {
-      await tx.insert(users).values([{ id: userId }]);
+      await tx.insert(users).values([{ id: userId }, { id: otherUserId }]);
       await tx.insert(agents).values({ id: agentId, title: 'Test Agent', userId });
     });
   });
@@ -190,9 +193,10 @@ describe('HeteroSessionImporterRepo.importSessions', () => {
             role: 'assistant',
           },
         ],
-        sourceMessageClientId: 'cc-s1-r1',
+        metadata: { sourceToolCallId: 'tool_1', subagentType: 'Explore' },
+        sourceMessageClientId: 'cc-s1-a1',
         title: 'Explore something',
-        type: 'standalone',
+        type: 'isolation',
       },
     ];
 
@@ -207,7 +211,13 @@ describe('HeteroSessionImporterRepo.importSessions', () => {
       .from(threads)
       .where(eq(threads.topicId, result.topicId));
     expect(threadRow.clientId).toBe('cc-s1-agent-x');
-    expect(threadRow.type).toBe('standalone');
+    expect(threadRow.type).toBe('isolation');
+    // the CC Agent render finds the subagent conversation by this id — without it
+    // the thread exists but never expands under the tool call that spawned it
+    expect(threadRow.metadata).toMatchObject({
+      sourceToolCallId: 'tool_1',
+      subagentType: 'Explore',
+    });
 
     const threadMessages = await serverDB
       .select()
@@ -215,17 +225,96 @@ describe('HeteroSessionImporterRepo.importSessions', () => {
       .where(eq(messages.threadId, threadRow.id))
       .orderBy(messages.createdAt);
     expect(threadMessages).toHaveLength(2);
-    // thread hangs on the main-chain tool message
+    // thread hangs on the assistant message that emitted the spawning tool call
     const [sourceRow] = await serverDB
       .select()
       .from(messages)
-      .where(eq(messages.clientId, 'cc-s1-r1'));
+      .where(eq(messages.clientId, 'cc-s1-a1'));
     expect(threadRow.sourceMessageId).toBe(sourceRow.id);
 
     // re-import: thread and its messages are skipped
     const [second] = await repo.importSessions({ agentId, sessions: [payload] });
     expect(second.insertedThreads).toBe(0);
     expect(second.insertedMessages).toBe(0);
+  });
+
+  it('backfills thread metadata onto a thread a previous import wrote without it', async () => {
+    const repo = new HeteroSessionImporterRepo(serverDB, userId);
+
+    // what the old importer wrote: no metadata, and the wrong thread type
+    const stale = basePayload();
+    stale.threads = [
+      {
+        clientId: 'cc-s1-agent-x',
+        messages: [{ clientId: 'cc-s1-agent-x-u1', content: 'subagent prompt', role: 'user' }],
+        title: 'Explore something',
+        type: 'standalone',
+      },
+    ];
+    await repo.importSessions({ agentId, sessions: [stale] });
+
+    const fresh = basePayload();
+    fresh.threads = [
+      {
+        ...stale.threads[0],
+        metadata: { sourceToolCallId: 'tool_1', subagentType: 'Explore' },
+        sourceMessageClientId: 'cc-s1-a1',
+        type: 'isolation',
+      },
+    ];
+    const [result] = await repo.importSessions({ agentId, sessions: [fresh] });
+
+    const [threadRow] = await serverDB
+      .select()
+      .from(threads)
+      .where(eq(threads.topicId, result.topicId));
+    // re-importing an already-imported session is how a user recovers a thread
+    // that was imported before it could be anchored
+    expect(threadRow.type).toBe('isolation');
+    expect(threadRow.metadata).toMatchObject({ sourceToolCallId: 'tool_1' });
+    expect(threadRow.sourceMessageId).not.toBeNull();
+  });
+
+  it('attaches uploaded images to their messages, ignoring files the caller does not own', async () => {
+    const [own] = await serverDB
+      .insert(files)
+      .values({
+        fileType: 'image/png',
+        name: 'shot.png',
+        size: 128,
+        url: 'files/2026-07-01/own.png',
+        userId,
+      })
+      .returning();
+    const [foreign] = await serverDB
+      .insert(files)
+      .values({
+        fileType: 'image/png',
+        name: 'secret.png',
+        size: 128,
+        url: 'files/2026-07-01/secret.png',
+        userId: otherUserId,
+      })
+      .returning();
+
+    const payload = basePayload();
+    // the ids arrive from the client that read the transcript — untrusted input
+    payload.messages[0].fileIds = [own.id, foreign.id];
+
+    const repo = new HeteroSessionImporterRepo(serverDB, userId);
+    const [result] = await repo.importSessions({ agentId, sessions: [payload] });
+
+    const [userRow] = await serverDB
+      .select()
+      .from(messages)
+      .where(and(eq(messages.topicId, result.topicId), eq(messages.clientId, 'cc-s1-u1')));
+    const attached = await serverDB
+      .select()
+      .from(messagesFiles)
+      .where(eq(messagesFiles.messageId, userRow.id));
+
+    // stapling another user's file onto a message would leak it into this chat
+    expect(attached.map((row) => row.fileId)).toEqual([own.id]);
   });
 
   it('keeps message order when the source repeats identical timestamps', async () => {

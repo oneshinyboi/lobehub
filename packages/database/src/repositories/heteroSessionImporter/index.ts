@@ -6,7 +6,7 @@ import type {
 } from '@lobechat/types';
 import { and, count, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 
-import { messagePlugins, messages, threads, topics } from '../../schemas';
+import { files, messagePlugins, messages, messagesFiles, threads, topics } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { idGenerator } from '../../utils/idGenerator';
 import { buildWorkspaceWhere } from '../../utils/workspace';
@@ -173,6 +173,9 @@ export class HeteroSessionImporterRepo {
       });
 
       // 4. threads (subagent transcripts)
+      //
+      // Threads arrive parent-first, so a nested subagent's spawning tool call is
+      // already in `clientIdToDbId` when its own thread is anchored.
       let insertedThreads = 0;
       for (const thread of session.threads ?? []) {
         const [existingThread] = await tx
@@ -180,22 +183,33 @@ export class HeteroSessionImporterRepo {
           .from(threads)
           .where(and(eq(threads.clientId, thread.clientId), this.scopeWhere(threads)));
 
+        // `metadata.sourceToolCallId` is what makes the subagent conversation
+        // expand inline under the tool call that spawned it — the CC `Agent`
+        // render looks the thread up by it. Persist it, and BACKFILL it onto
+        // threads a previous import wrote without it.
+        const threadValues = {
+          metadata: thread.metadata ?? null,
+          sourceMessageId: thread.sourceMessageClientId
+            ? (clientIdToDbId.get(thread.sourceMessageClientId) ?? null)
+            : null,
+          status: thread.status ?? 'completed',
+          title: thread.title?.slice(0, 200) ?? null,
+          type: thread.type,
+        };
+
         let threadId = existingThread?.id;
-        if (!threadId) {
+        if (threadId) {
+          await tx.update(threads).set(threadValues).where(eq(threads.id, threadId));
+        } else {
           threadId = idGenerator('threads', 16);
           await tx.insert(threads).values({
             agentId,
             clientId: thread.clientId,
             id: threadId,
-            sourceMessageId: thread.sourceMessageClientId
-              ? (clientIdToDbId.get(thread.sourceMessageClientId) ?? null)
-              : null,
-            status: thread.status ?? 'completed',
-            title: thread.title?.slice(0, 200) ?? null,
             topicId,
-            type: thread.type,
             userId: this.userId,
             workspaceId: this.workspaceId ?? null,
+            ...threadValues,
           });
           insertedThreads++;
         }
@@ -292,14 +306,52 @@ export class HeteroSessionImporterRepo {
         workspaceId: this.workspaceId ?? null,
       }));
 
+    const fileRows = await this.buildMessageFileRows(tx, fresh, clientIdToDbId);
+
     for (let i = 0; i < messageRows.length; i += BATCH_SIZE) {
       await tx.insert(messages).values(messageRows.slice(i, i + BATCH_SIZE));
     }
     for (let i = 0; i < pluginRows.length; i += BATCH_SIZE) {
       await tx.insert(messagePlugins).values(pluginRows.slice(i, i + BATCH_SIZE));
     }
+    for (let i = 0; i < fileRows.length; i += BATCH_SIZE) {
+      await tx.insert(messagesFiles).values(fileRows.slice(i, i + BATCH_SIZE));
+    }
 
     return { inserted: fresh.length, skipped };
+  };
+
+  /**
+   * Rows attaching the transcript's uploaded images to their messages. The
+   * images were uploaded by the client that read the transcript (only it holds
+   * the base64), so the ids arrive as untrusted input: resolve them against the
+   * caller's OWN files and silently drop anything else, or an import payload
+   * could staple another user's file onto a message.
+   */
+  private buildMessageFileRows = async (
+    tx: any,
+    fresh: HeteroSessionImportMessage[],
+    clientIdToDbId: Map<string, string>,
+  ) => {
+    const claimed = [...new Set(fresh.flatMap((m) => m.fileIds ?? []))];
+    if (claimed.length === 0) return [];
+
+    const owned = await tx
+      .select({ id: files.id })
+      .from(files)
+      .where(and(inArray(files.id, claimed), this.scopeWhere(files)));
+    const ownedIds = new Set(owned.map((row: { id: string }) => row.id));
+
+    return fresh.flatMap((m) =>
+      (m.fileIds ?? [])
+        .filter((fileId) => ownedIds.has(fileId))
+        .map((fileId) => ({
+          fileId,
+          messageId: clientIdToDbId.get(m.clientId)!,
+          userId: this.userId,
+          workspaceId: this.workspaceId ?? null,
+        })),
+    );
   };
 
   /**

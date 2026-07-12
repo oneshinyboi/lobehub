@@ -1,8 +1,46 @@
 /**
  * Shared helpers for transcript parsers.
  */
+import type { HeteroSessionImportImage } from '@lobechat/types';
 
 const NUL = String.fromCodePoint(0);
+
+/**
+ * Stand-in emitted into a message's text for every embedded image, so the
+ * position of each image inside the content survives parsing. The uploader
+ * rewrites these placeholders one-for-one (in emission order) once it knows
+ * which uploads succeeded — see `rewriteImagePlaceholders`.
+ */
+export const IMPORTED_IMAGE_PLACEHOLDER = '![imported image placeholder]';
+
+/**
+ * Resolve the placeholders left by the parsers against the outcome of each
+ * upload, position-for-position (`images` must be in the parser's emission order
+ * for this message). An image whose upload failed always keeps its placeholder —
+ * losing the marker would silently erase the fact that an image was there.
+ *
+ * - `markdown` — for tool messages, whose renders show `pluginState.images` but
+ *   not the message's file attachments. A markdown image also tells a model
+ *   later handed this history that an image is here, and where.
+ * - `strip` — for user messages, where the uploaded file renders as a native
+ *   attachment thumbnail; keeping the marker too would double-render it.
+ */
+export const rewriteImagePlaceholders = (
+  content: string,
+  images: HeteroSessionImportImage[],
+  mode: 'markdown' | 'strip',
+): string => {
+  if (!content.includes(IMPORTED_IMAGE_PLACEHOLDER)) return content;
+
+  let index = 0;
+  const rewritten = content.replaceAll(IMPORTED_IMAGE_PLACEHOLDER, () => {
+    const image = images[index++];
+    if (!image?.url) return IMPORTED_IMAGE_PLACEHOLDER;
+    return mode === 'markdown' ? `![image](${image.url})` : '';
+  });
+
+  return rewritten.replaceAll(/\n{3,}/g, '\n\n').trim();
+};
 
 /**
  * Postgres rejects NUL characters in text/jsonb columns, and real-world

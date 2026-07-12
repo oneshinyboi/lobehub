@@ -353,4 +353,39 @@ describe('parseClaudeCodeSessionDigest', () => {
     expect(digest.firstPrompt).toBe('帮我修个 bug');
     expect(digest.title).toBe('帮我修个 bug');
   });
+
+  it('carries embedded images out of the content, leaving a positional placeholder', () => {
+    const withImage = line({
+      cwd: '/repo',
+      isSidechain: false,
+      message: {
+        content: [
+          { text: 'look at this', type: 'text' },
+          {
+            source: { data: 'AAAA', media_type: 'image/png', type: 'base64' },
+            type: 'image',
+          },
+        ],
+        role: 'user',
+      },
+      parentUuid: null,
+      sessionId: SESSION_ID,
+      timestamp: '2026-07-01T00:00:00.000Z',
+      type: 'user',
+      uuid: 'u1',
+    });
+    const transcript = [
+      withImage,
+      assistantRecord('a1', 'u1', 'msg_1', { text: 'ok', type: 'text' }),
+    ].join('\n');
+
+    const parsed = parseClaudeCodeSession(transcript)!;
+    const [user] = parsed.messages;
+
+    // the base64 is lifted out for the uploader instead of being persisted inline
+    expect(user.images).toEqual([{ data: 'AAAA', mediaType: 'image/png' }]);
+    // ...and its position in the text is preserved for the placeholder rewrite
+    expect(user.content).toBe('look at this\n\n![imported image placeholder]');
+    expect(parsed.imageCount).toBe(1);
+  });
 });

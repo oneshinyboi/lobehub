@@ -207,4 +207,43 @@ describe('parseCodexSessionDigest', () => {
     const transcript = [sessionMeta(), userMessage('# AGENTS.md instructions')].join('\n');
     expect(parseCodexSessionDigest(transcript, '/tmp/rollout.jsonl')).toBeNull();
   });
+
+  it('carries an inlined data-URL image out of the content', () => {
+    const transcript = [
+      sessionMeta(),
+      responseItem({
+        content: [
+          { text: 'see the screenshot', type: 'input_text' },
+          { image_url: 'data:image/png;base64,AAAA', type: 'input_image' },
+        ],
+        role: 'user',
+        type: 'message',
+      }),
+      assistantMessage('done'),
+    ].join('\n');
+
+    const parsed = parseCodexSession(transcript)!;
+    const [user] = parsed.messages;
+
+    expect(user.images).toEqual([{ data: 'AAAA', mediaType: 'image/png' }]);
+    expect(user.content).toBe('see the screenshot\n\n![imported image placeholder]');
+  });
+
+  it('leaves a remote image_url as a plain markdown image — there is nothing to upload', () => {
+    const transcript = [
+      sessionMeta(),
+      responseItem({
+        content: [{ image_url: 'https://cdn.test/a.png', type: 'input_image' }],
+        role: 'user',
+        type: 'message',
+      }),
+      assistantMessage('done'),
+    ].join('\n');
+
+    const parsed = parseCodexSession(transcript)!;
+    const [user] = parsed.messages;
+
+    expect(user.images).toBeUndefined();
+    expect(user.content).toBe('![image](https://cdn.test/a.png)');
+  });
 });

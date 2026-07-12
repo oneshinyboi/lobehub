@@ -12,4 +12,10 @@ export {
   parseCodexSession,
   parseCodexSessionDigest,
 } from './codex';
-export { parseJsonlRecords, stripNulDeep, truncateTitle } from './utils';
+export {
+  IMPORTED_IMAGE_PLACEHOLDER,
+  parseJsonlRecords,
+  rewriteImagePlaceholders,
+  stripNulDeep,
+  truncateTitle,
+} from './utils';

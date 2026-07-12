@@ -31,6 +31,13 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: homedirMock };
 });
 
+// the file store the transcript images are uploaded into; `undefined` = signed out
+const { fileStorePortMock } = vi.hoisted(() => ({ fileStorePortMock: vi.fn() }));
+
+vi.mock('@/modules/heterogeneousAgent/fileStorePort', () => ({
+  createLambdaFileStorePort: () => fileStorePortMock(),
+}));
+
 // ---------- fixtures ----------
 
 const fakeHome = mkdtempSync(path.join(tmpdir(), 'hetero-session-ctr-'));
@@ -38,7 +45,20 @@ homedirMock.mockReturnValue(fakeHome);
 
 const ccLine = (record: Record<string, any>) => JSON.stringify(record);
 
-const writeCcSession = (folder: string, sessionId: string, cwd: string) => {
+const AGENT_TOOL_USE_ID = 'toolu_agent1';
+const PNG_BASE64 = 'aW1hZ2UtYnl0ZXM=';
+
+/**
+ * `agentToolUse` adds an `Agent` tool call to the assistant turn — the anchor a
+ * subagent thread hangs on. `image` pastes a base64 screenshot into the user
+ * turn, as CC records one.
+ */
+const writeCcSession = (
+  folder: string,
+  sessionId: string,
+  cwd: string,
+  opts?: { agentToolUse?: boolean; image?: boolean },
+) => {
   const dir = path.join(fakeHome, '.claude', 'projects', folder);
   mkdirSync(dir, { recursive: true });
   const lines = [
@@ -46,7 +66,20 @@ const writeCcSession = (folder: string, sessionId: string, cwd: string) => {
       cwd,
       gitBranch: 'main',
       isSidechain: false,
-      message: { content: [{ text: `question of ${sessionId}`, type: 'text' }], role: 'user' },
+      message: {
+        content: [
+          { text: `question of ${sessionId}`, type: 'text' },
+          ...(opts?.image
+            ? [
+                {
+                  source: { data: PNG_BASE64, media_type: 'image/png', type: 'base64' },
+                  type: 'image',
+                },
+              ]
+            : []),
+        ],
+        role: 'user',
+      },
       parentUuid: null,
       sessionId,
       timestamp: '2026-07-01T00:00:00.000Z',
@@ -56,7 +89,19 @@ const writeCcSession = (folder: string, sessionId: string, cwd: string) => {
     ccLine({
       isSidechain: false,
       message: {
-        content: [{ text: 'answer', type: 'text' }],
+        content: [
+          { text: 'answer', type: 'text' },
+          ...(opts?.agentToolUse
+            ? [
+                {
+                  id: AGENT_TOOL_USE_ID,
+                  input: { description: 'Probe the repo' },
+                  name: 'Agent',
+                  type: 'tool_use',
+                },
+              ]
+            : []),
+        ],
         id: `${sessionId}-msg1`,
         model: 'claude-opus-4-8',
         usage: { input_tokens: 100, output_tokens: 50 },
@@ -74,7 +119,13 @@ const writeCcSession = (folder: string, sessionId: string, cwd: string) => {
   return filePath;
 };
 
-const writeCcSubagent = (sessionFilePath: string, sessionId: string) => {
+/** `meta` mirrors the `agent-<id>.meta.json` sidecar CC writes next to each transcript */
+const writeCcSubagent = (
+  sessionFilePath: string,
+  sessionId: string,
+  agentId = 'agent-abc',
+  meta?: Record<string, unknown>,
+) => {
   const subDir = path.join(sessionFilePath.replace(/\.jsonl$/, ''), 'subagents');
   mkdirSync(subDir, { recursive: true });
   const lines = [
@@ -86,20 +137,21 @@ const writeCcSubagent = (sessionFilePath: string, sessionId: string) => {
       sessionId,
       timestamp: '2026-07-01T00:00:02.000Z',
       type: 'user',
-      uuid: `${sessionId}-s1`,
+      uuid: `${sessionId}-${agentId}-s1`,
     }),
     ccLine({
       agentId: 'sub1',
       isSidechain: true,
       message: { content: [{ text: 'subagent answer', type: 'text' }], id: `${sessionId}-smsg` },
-      parentUuid: `${sessionId}-s1`,
+      parentUuid: `${sessionId}-${agentId}-s1`,
       sessionId,
       timestamp: '2026-07-01T00:00:03.000Z',
       type: 'assistant',
-      uuid: `${sessionId}-s2`,
+      uuid: `${sessionId}-${agentId}-s2`,
     }),
   ];
-  writeFileSync(path.join(subDir, 'agent-abc.jsonl'), lines.join('\n'));
+  writeFileSync(path.join(subDir, `${agentId}.jsonl`), lines.join('\n'));
+  if (meta) writeFileSync(path.join(subDir, `${agentId}.meta.json`), JSON.stringify(meta));
 };
 
 const writeCodexSession = (sessionId: string, cwd: string) => {
@@ -136,10 +188,20 @@ const writeCodexSession = (sessionId: string, cwd: string) => {
 };
 
 // two CC storage folders resolving to the SAME cwd (EnterWorktree case) + one other cwd
-const ccFileA = writeCcSession('-repo-main', 'sess-a', '/repo/main');
+const ccFileA = writeCcSession('-repo-main', 'sess-a', '/repo/main', {
+  agentToolUse: true,
+  image: true,
+});
 writeCcSession('-repo-main--claude-worktrees-x', 'sess-b', '/repo/main');
-writeCcSession('-repo-other', 'sess-c', '/repo/other');
-writeCcSubagent(ccFileA, 'sess-a');
+const ccFileC = writeCcSession('-repo-other', 'sess-c', '/repo/other');
+writeCcSubagent(ccFileA, 'sess-a', 'agent-abc', {
+  agentType: 'Explore',
+  description: 'Probe the repo',
+  spawnDepth: 1,
+  toolUseId: AGENT_TOOL_USE_ID,
+});
+// a subagent from a pre-sidecar CC version: transcript, but no meta.json
+writeCcSubagent(ccFileC, 'sess-c', 'agent-legacy');
 writeCcSession('-tmp-probe', 'sess-tmp', '/tmp/probe');
 const codexFile = writeCodexSession('cdx-1', '/repo/main');
 // corrupt file must not fail the scan
@@ -156,6 +218,10 @@ afterAll(() => {
 
 const storeData: Record<string, any> = { heteroSessionDirPrefs: {} };
 const mockApp = {
+  getController: vi.fn(() => ({
+    getAccessToken: async () => 'token',
+    getRemoteServerUrl: async () => 'https://server.test',
+  })),
   storeManager: {
     get: vi.fn((key: string, fallback?: any) => storeData[key] ?? fallback),
     set: vi.fn((key: string, value: any) => {
@@ -164,11 +230,26 @@ const mockApp = {
   },
 } as unknown as App;
 
+/** an authed file store: hash miss → presign → PUT → file record */
+const signedInFileStore = () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK' })),
+  );
+  fileStorePortMock.mockResolvedValue({
+    checkFileHash: async () => ({ isExist: false }),
+    createFile: async () => ({ id: 'file-1', url: 'https://cdn.test/shot.png' }),
+    createS3PreSignedUrl: async () => 'https://s3.test/put',
+  });
+};
+
 describe('HeteroSessionCtr', () => {
   let controller: HeteroSessionCtr;
 
   beforeEach(() => {
     storeData.heteroSessionDirPrefs = {};
+    // default: signed out — no file store to upload into
+    fileStorePortMock.mockReset().mockResolvedValue(undefined);
     controller = new HeteroSessionCtr(mockApp);
   });
 
@@ -236,11 +317,41 @@ describe('HeteroSessionCtr', () => {
       expect(payload?.topicClientId).toBe('claude-code-session-sess-a');
       expect(payload?.messages).toHaveLength(2);
       expect(payload?.threads).toHaveLength(1);
-      expect(payload?.threads?.[0]).toMatchObject({
-        clientId: 'claude-code-thread-agent-abc',
-        type: 'standalone',
-      });
       expect(payload?.threads?.[0].messages).toHaveLength(2);
+    });
+
+    it('anchors a subagent thread on the tool call that spawned it', async () => {
+      const payload = await controller.readLocalSession({
+        filePath: ccFileA,
+        source: 'claude-code',
+      });
+
+      const [thread] = payload!.threads!;
+      const assistant = payload!.messages.find((m) => m.role === 'assistant')!;
+
+      expect(thread).toMatchObject({
+        clientId: 'claude-code-thread-agent-abc',
+        // the CC Agent render finds the subagent conversation by this id — a
+        // thread without it never expands under its tool call
+        metadata: { sourceToolCallId: AGENT_TOOL_USE_ID, subagentType: 'Explore' },
+        title: 'Probe the repo',
+        type: 'isolation',
+      });
+      expect(thread.sourceMessageClientId).toBe(assistant.clientId);
+      // the thread's opening prompt hangs off the spawning message
+      expect(thread.messages[0].parentClientId).toBe(assistant.clientId);
+    });
+
+    it('still imports a subagent transcript that has no meta.json sidecar', async () => {
+      const payload = await controller.readLocalSession({
+        filePath: ccFileC,
+        source: 'claude-code',
+      });
+
+      const [thread] = payload!.threads!;
+      expect(thread.clientId).toBe('claude-code-thread-agent-legacy');
+      expect(thread.metadata?.sourceToolCallId).toBeUndefined();
+      expect(thread.sourceMessageClientId).toBeUndefined();
     });
 
     it('builds a Codex payload', async () => {
@@ -251,6 +362,35 @@ describe('HeteroSessionCtr', () => {
 
       expect(payload?.topicClientId).toBe('codex-session-cdx-1');
       expect(payload?.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    });
+
+    it('uploads embedded images and attaches them as message files', async () => {
+      signedInFileStore();
+
+      const payload = await controller.readLocalSession({
+        filePath: ccFileA,
+        source: 'claude-code',
+      });
+
+      const user = payload!.messages.find((m) => m.role === 'user')!;
+      expect(user.fileIds).toEqual(['file-1']);
+      // base64 must never reach the server — it is stripped once uploaded
+      expect(user.images).toBeUndefined();
+      // the file renders as a native attachment, so the marker is dropped
+      expect(user.content).toBe('question of sess-a');
+    });
+
+    it('keeps the placeholder when there is no file store to upload into', async () => {
+      const payload = await controller.readLocalSession({
+        filePath: ccFileA,
+        source: 'claude-code',
+      });
+
+      const user = payload!.messages.find((m) => m.role === 'user')!;
+      expect(user.fileIds).toBeUndefined();
+      expect(user.images).toBeUndefined();
+      // silently dropping the image would erase the fact that one was there
+      expect(user.content).toContain('![imported image placeholder]');
     });
 
     it('refuses to read files outside the CLI transcript roots', async () => {

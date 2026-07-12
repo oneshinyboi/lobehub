@@ -1,11 +1,13 @@
 import type {
   HeteroSessionDigest,
+  HeteroSessionImportImage,
   HeteroSessionImportMessage,
   HeteroSessionImportPayload,
   HeteroSessionImportToolCall,
 } from '@lobechat/types';
 
 import {
+  IMPORTED_IMAGE_PLACEHOLDER,
   parseJsonlRecords,
   stripNulDeep,
   toModelUsageFromAnthropic,
@@ -48,29 +50,42 @@ export interface ParseClaudeCodeOptions {
   sidechain?: boolean;
 }
 
-interface ImageStats {
-  bytes: number;
-  count: number;
+interface ContentParts {
+  /** embedded images, in the order their placeholders appear in `text` */
+  images: HeteroSessionImportImage[];
+  text: string;
 }
 
-const textOfContent = (content: any, img?: ImageStats): string => {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
+/**
+ * Flatten an Anthropic content value into text, leaving a placeholder in place
+ * of every embedded base64 image and returning the images alongside. The images
+ * are uploaded downstream (never persisted as base64) and their placeholders
+ * resolved by `rewriteImagePlaceholders`.
+ */
+const partsOfContent = (content: any): ContentParts => {
+  if (typeof content === 'string') return { images: [], text: content };
+  if (!Array.isArray(content)) return { images: [], text: '' };
+
+  const images: HeteroSessionImportImage[] = [];
+  const text = content
     .map((block: any) => {
       if (block?.type === 'text') return block.text;
-      if (block?.type === 'image') {
-        if (img) {
-          img.count++;
-          img.bytes += block.source?.data?.length ?? 0;
-        }
-        return '![imported image placeholder]';
+      if (block?.type === 'image' && block.source?.type === 'base64' && block.source.data) {
+        images.push({
+          data: block.source.data,
+          mediaType: block.source.media_type ?? 'image/png',
+        });
+        return IMPORTED_IMAGE_PLACEHOLDER;
       }
       return '';
     })
     .filter(Boolean)
     .join('\n\n');
+
+  return { images, text };
 };
+
+const textOfContent = (content: any): string => partsOfContent(content).text;
 
 /**
  * Claude Code prepends an injected `## Workspace` preamble to the first user
@@ -166,7 +181,11 @@ export const parseClaudeCodeSession = (
     }
   }
 
-  const img: ImageStats = { bytes: 0, count: 0 };
+  const img = { bytes: 0, count: 0 };
+  const countImages = (images: HeteroSessionImportImage[]) => {
+    img.count += images.length;
+    for (const image of images) img.bytes += image.data?.length ?? 0;
+  };
   const messages: HeteroSessionImportMessage[] = [];
   let prevClientId: string | null = null;
   // record uuids are globally unique across session files (CC forks generate
@@ -189,13 +208,16 @@ export const parseClaudeCodeSession = (
       // tool_result-only records are emitted via the assistant's tool_use blocks
       if (!isToolResultOnly) {
         const clientId = clientIdOf(rec.uuid);
+        const parts = partsOfContent(content_);
+        countImages(parts.images);
         messages.push({
           clientId,
-          content: textOfContent(content_, img),
+          content: parts.text,
           createdAt: rec.timestamp,
           metadata: { heteroMessageId: rec.uuid, heteroSessionId: sessionId },
           parentClientId: prevClientId,
           role: 'user',
+          ...(parts.images.length > 0 ? { images: parts.images } : {}),
         });
         prevClientId = clientId;
       }
@@ -263,9 +285,11 @@ export const parseClaudeCodeSession = (
       const match = toolResultByUseId.get(tool.id);
       if (!match) continue;
       const toolClientId = clientIdOf(`${match.record.uuid}#${tool.id}`);
+      const parts = partsOfContent(match.block.content);
+      countImages(parts.images);
       messages.push({
         clientId: toolClientId,
-        content: textOfContent(match.block.content, img),
+        content: parts.text,
         createdAt: match.record.timestamp,
         metadata: { heteroMessageId: match.record.uuid, heteroSessionId: sessionId },
         parentClientId: assistantClientId,
@@ -277,6 +301,7 @@ export const parseClaudeCodeSession = (
         },
         role: 'tool',
         toolCallId: tool.id,
+        ...(parts.images.length > 0 ? { images: parts.images } : {}),
       });
       prevClientId = toolClientId;
     }

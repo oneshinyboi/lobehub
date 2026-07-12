@@ -1,10 +1,12 @@
 import type {
   HeteroSessionDigest,
+  HeteroSessionImportImage,
   HeteroSessionImportMessage,
   HeteroSessionImportPayload,
 } from '@lobechat/types';
 
 import {
+  IMPORTED_IMAGE_PLACEHOLDER,
   parseJsonlRecords,
   stripNulDeep,
   toModelUsageFromCodex,
@@ -44,18 +46,45 @@ const SCAFFOLD_PREFIXES = [
 const isScaffoldText = (text: string) =>
   SCAFFOLD_PREFIXES.some((prefix) => text.trimStart().startsWith(prefix));
 
-const textOfCodexContent = (content: any): string => {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
+/** `data:image/png;base64,<payload>` — Codex inlines images as data URLs */
+const DATA_URL_RE = /^data:([^;,]+);base64,(.+)$/s;
+
+interface CodexContentParts {
+  /** embedded images, in the order their placeholders appear in `text` */
+  images: HeteroSessionImportImage[];
+  text: string;
+}
+
+/**
+ * Flatten a Codex content value into text, leaving a placeholder in place of
+ * every embedded image and returning the images alongside — see the Claude Code
+ * parser's `partsOfContent` for why the base64 is carried out separately.
+ * A non-base64 `image_url` (a remote link) has nothing to upload: it stays a
+ * plain markdown image.
+ */
+const partsOfCodexContent = (content: any): CodexContentParts => {
+  if (typeof content === 'string') return { images: [], text: content };
+  if (!Array.isArray(content)) return { images: [], text: '' };
+
+  const images: HeteroSessionImportImage[] = [];
+  const text = content
     .map((block: any) => {
       if (block?.type === 'input_text' || block?.type === 'output_text') return block.text;
-      if (block?.type === 'input_image') return '![imported image placeholder]';
+      if (block?.type === 'input_image') {
+        const match = DATA_URL_RE.exec(block.image_url ?? '');
+        if (!match) return block.image_url ? `![image](${block.image_url})` : '';
+        images.push({ data: match[2], mediaType: match[1] });
+        return IMPORTED_IMAGE_PLACEHOLDER;
+      }
       return '';
     })
     .filter(Boolean)
     .join('\n\n');
+
+  return { images, text };
 };
+
+const textOfCodexContent = (content: any): string => partsOfCodexContent(content).text;
 
 /** normalize the various tool-call payload flavors into {name, callId, arguments} */
 const asToolCall = (payload: any): { args: string; callId: string; name: string } | null => {
@@ -156,7 +185,7 @@ export const parseCodexSession = (content: string): ParsedCodexSession | null =>
     }
 
     if (payload.type === 'message') {
-      const text = textOfCodexContent(payload.content);
+      const { images, text } = partsOfCodexContent(payload.content);
       if (payload.role === 'user') {
         if (!text || isScaffoldText(text)) continue;
         title ??= truncateTitle(text);
@@ -168,6 +197,7 @@ export const parseCodexSession = (content: string): ParsedCodexSession | null =>
           metadata: { heteroSessionId: sessionId },
           parentClientId: prevClientId,
           role: 'user',
+          ...(images.length > 0 ? { images } : {}),
         });
         prevClientId = clientId;
         pendingReasoning = [];
