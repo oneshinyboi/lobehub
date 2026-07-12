@@ -161,8 +161,32 @@ export const createAgentExecutors = (context: {
   skipCreateFirstMessage?: boolean;
   /** ToolsEngine for expanding dynamically activated tools */
   toolsEngine?: ToolsEngine;
+  userMessageId?: string;
 }) => {
   let shouldSkipCreateMessage = context.skipCreateFirstMessage;
+
+  const hasToolCallingOperation = () => {
+    const operations = context.get().operations;
+    const rootOperation = operations[context.operationId];
+    if (!rootOperation) return false;
+
+    const visited = new Set<string>();
+    const pending = [...(rootOperation.childOperationIds ?? [])];
+
+    while (pending.length > 0) {
+      const operationId = pending.pop();
+      if (!operationId || visited.has(operationId)) continue;
+
+      visited.add(operationId);
+      const operation = operations[operationId];
+      if (!operation) continue;
+      if (operation.type === 'toolCalling') return true;
+
+      pending.push(...(operation.childOperationIds ?? []));
+    }
+
+    return false;
+  };
 
   /**
    * Get operation context via closure
@@ -545,6 +569,8 @@ export const createAgentExecutors = (context: {
 
           finalUsage = result.usage;
           finalToolCalls = result.toolCalls;
+          const isOperationFinalAssistantMessage =
+            (toolCalls?.length ?? 0) === 0 && hasToolCallingOperation();
 
           await optimisticUpdateMessageContent(
             assistantMessageId,
@@ -561,6 +587,12 @@ export const createAgentExecutors = (context: {
                 usage: result.metadata.usage,
                 finishType: result.metadata.finishType,
                 ...(result.metadata.isMultimodal && { isMultimodal: true }),
+                ...(isOperationFinalAssistantMessage && {
+                  work: {
+                    rootOperationId: context.operationId,
+                    ...(context.userMessageId && { userMessageId: context.userMessageId }),
+                  },
+                }),
               },
             },
             { operationId: context.operationId },

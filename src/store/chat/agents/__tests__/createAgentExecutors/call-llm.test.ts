@@ -2,7 +2,7 @@ import { type GeneralAgentCallLLMResultPayload } from '@lobechat/agent-runtime';
 import { LOADING_FLAT } from '@lobechat/const';
 import type { MessageToolCall } from '@lobechat/types';
 import { RequestTrigger } from '@lobechat/types';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { chatService } from '@/services/chat';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
@@ -48,6 +48,10 @@ vi.mock('@/store/agent/selectors', () => ({
 vi.mock('@/store/agent/store', () => ({
   getAgentStoreState: vi.fn().mockReturnValue({}),
 }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 /**
  * Helper to mock chatService.createAssistantMessageStream
@@ -127,6 +131,95 @@ describe('call_llm executor', () => {
           operationId: expect.any(String),
         }),
       );
+    });
+
+    it('should mark work metadata when the runtime operation final assistant follows tool calls', async () => {
+      const mockStore = createMockStore();
+      const parentMessage = createUserMessage({ id: 'msg_parent_after_tool' });
+      const context = createTestContext({
+        operationId: 'op_root_runtime',
+        parentId: parentMessage.id,
+        userMessageId: parentMessage.id,
+      });
+      mockStore.operations[context.operationId] = {
+        abortController: new AbortController(),
+        childOperationIds: ['op_tool_calling'],
+        context: {
+          agentId: context.agentId,
+          messageId: context.parentId,
+          topicId: context.topicId,
+        },
+        id: context.operationId,
+        metadata: { startTime: Date.now() },
+        status: 'running',
+        type: 'execAgentRuntime',
+      } as any;
+      mockStore.operations.op_tool_calling = {
+        abortController: new AbortController(),
+        childOperationIds: [],
+        context: {
+          agentId: context.agentId,
+          messageId: 'msg_tool_message',
+          topicId: context.topicId,
+        },
+        id: 'op_tool_calling',
+        metadata: { startTime: Date.now() },
+        parentOperationId: context.operationId,
+        status: 'completed',
+        type: 'toolCalling',
+      } as any;
+      const instruction = createCallLLMInstruction({
+        messages: [parentMessage],
+        parentMessageId: parentMessage.id,
+      });
+      const state = createInitialState({ operationId: 'op_root_runtime' });
+
+      mockStreamResponse({ content: 'Task created' });
+      mockStore.dbMessagesMap[context.messageKey] = [parentMessage];
+
+      await executeWithMockContext({
+        executor: 'call_llm',
+        instruction,
+        state,
+        mockStore,
+        context,
+      });
+
+      const contentUpdate = vi.mocked(mockStore.optimisticUpdateMessageContent).mock.calls.at(-1);
+      expect(contentUpdate?.[2]?.metadata).toMatchObject({
+        work: {
+          rootOperationId: 'op_root_runtime',
+          userMessageId: parentMessage.id,
+        },
+      });
+    });
+
+    it('should not mark work metadata when assistant message follows a user message', async () => {
+      const mockStore = createMockStore();
+      const userMessage = createUserMessage({ id: 'msg_user_parent' });
+      const context = createTestContext({
+        operationId: 'op_root_runtime',
+        parentId: userMessage.id,
+      });
+      const instruction = createCallLLMInstruction({
+        messages: [userMessage],
+        parentMessageId: userMessage.id,
+      });
+      const state = createInitialState({ operationId: 'op_root_runtime' });
+
+      mockStreamResponse({ content: 'Hello' });
+      mockStore.dbMessagesMap[context.messageKey] = [userMessage];
+
+      await executeWithMockContext({
+        executor: 'call_llm',
+        instruction,
+        state,
+        mockStore,
+        context,
+      });
+
+      const contentUpdate = vi.mocked(mockStore.optimisticUpdateMessageContent).mock.calls.at(-1);
+      expect(contentUpdate?.[2]?.metadata?.work).toBeUndefined();
     });
 
     it('should call chatService.createAssistantMessageStream with correct params', async () => {

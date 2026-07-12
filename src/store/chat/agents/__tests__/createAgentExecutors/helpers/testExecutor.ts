@@ -47,6 +47,7 @@ export const executeWithMockContext = async ({
     scope?: MessageMapScope;
     subAgentId?: string;
     topicId?: string | null;
+    userMessageId?: string;
   };
   executor: AgentInstruction['type'];
   metadata?: Pick<MessageMetadata, 'trigger'>;
@@ -84,6 +85,7 @@ export const executeWithMockContext = async ({
     operationId: context.operationId,
     parentId: context.parentId,
     skipCreateFirstMessage,
+    userMessageId: context.userMessageId,
   });
 
   const executorFn = executors[executor];
@@ -150,6 +152,7 @@ export const createTestContext = (
     scope?: MessageMapScope;
     subAgentId?: string;
     topicId?: string | null;
+    userMessageId?: string;
   } = {},
 ) => {
   return {
@@ -163,5 +166,6 @@ export const createTestContext = (
     scope: overrides.scope,
     subAgentId: overrides.subAgentId,
     topicId: overrides.topicId !== undefined ? overrides.topicId : 'test-topic',
+    userMessageId: overrides.userMessageId,
   };
 };

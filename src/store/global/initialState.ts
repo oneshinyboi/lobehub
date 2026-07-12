@@ -37,7 +37,7 @@ export enum GroupSettingsTabs {
   Settings = 'settings',
 }
 
-export type WorkingSidebarTab = 'browser' | 'files' | 'params' | 'resources' | 'review';
+export type WorkingSidebarTab = 'browser' | 'files' | 'params' | 'resources' | 'review' | 'works';
 
 export const DEFAULT_RESOURCE_MANAGER_COLUMN_WIDTHS = {
   date: 160,

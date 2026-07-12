@@ -4,7 +4,7 @@ import { Flexbox } from '@lobehub/ui';
 import { FileText, ImageIcon, LayoutPanelTopIcon, Mic2, SquarePlay } from 'lucide-react';
 import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 
 import NavItem from '@/features/NavPanel/components/NavItem';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
@@ -16,6 +16,11 @@ const CategoryMenu = memo(() => {
   const { t } = useTranslation('file');
   const [activeKey, setMode] = useResourceManagerStore((s) => [s.category, s.setMode]);
   const navigate = useWorkspaceAwareNavigate();
+  const [searchParams] = useSearchParams();
+  // In Work-gallery mode (`?works=`) no file category is selected, so suppress
+  // the category highlight — otherwise "All" reads as active alongside the
+  // active Work entry.
+  const worksActive = !!searchParams.get('works');
 
   const items = useMemo(
     () => [
@@ -65,7 +70,11 @@ const CategoryMenu = memo(() => {
             navigate(item.url, { replace: true });
           }}
         >
-          <NavItem active={activeKey === item.key} icon={item.icon} title={item.title} />
+          <NavItem
+            active={!worksActive && activeKey === item.key}
+            icon={item.icon}
+            title={item.title}
+          />
         </Link>
       ))}
     </Flexbox>
