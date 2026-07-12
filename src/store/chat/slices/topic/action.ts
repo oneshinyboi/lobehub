@@ -16,10 +16,9 @@ import { chatService } from '@/services/chat';
 import { type GitLinkedPRSummary, gitService } from '@/services/git';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
-import { getAgentStoreState } from '@/store/agent';
-import { agentByIdSelectors } from '@/store/agent/selectors';
 import { type ChatStore } from '@/store/chat';
 import { evictMessageCache } from '@/store/chat/utils/evictMessageCache';
+import { snapshotAgentModelMetadata } from '@/store/chat/utils/snapshotAgentModelMetadata';
 import { topicMapKey, type TopicMapScope } from '@/store/chat/utils/topicMapKey';
 import {
   canReadTopicGitTransport,
@@ -53,24 +52,6 @@ const n = setNamespace('t');
 
 const STALE_RUNNING_TOPIC_TIMEOUT = 2 * 60 * 60 * 1000;
 const STALE_RUNNING_TOPIC_QUERY_PAGE_SIZE = 500;
-
-/**
- * Snapshot the given agent's current model/provider so a newly created topic
- * remembers which model it was started with. Subsequent model switches while the
- * topic is active update this metadata (see `updateTopicMetadata`), and
- * generation reads from it (see `topicSelectors.getTopicModelById`).
- */
-const snapshotAgentModelMetadata = (
-  agentId?: string | null,
-): Pick<ChatTopicMetadata, 'model' | 'provider'> | undefined => {
-  if (!agentId) return undefined;
-
-  const agentState = getAgentStoreState();
-  const model = agentByIdSelectors.getAgentModelById(agentId)(agentState);
-  if (!model) return undefined;
-
-  return { model, provider: agentByIdSelectors.getAgentModelProviderById(agentId)(agentState) };
-};
 
 type CronTopicsGroupWithJobInfo = {
   cronJob: unknown;

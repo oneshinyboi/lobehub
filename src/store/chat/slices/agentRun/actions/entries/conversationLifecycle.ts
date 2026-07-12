@@ -66,6 +66,7 @@ import {
   hasRunningCompressionOperation,
 } from '@/store/chat/utils/compression';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+import { snapshotAgentModelMetadata } from '@/store/chat/utils/snapshotAgentModelMetadata';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { getElectronStoreState } from '@/store/electron';
 import { useGlobalStore } from '@/store/global';
@@ -613,21 +614,29 @@ export class ConversationLifecycleActionImpl {
       runtimeType === 'gateway' && !operationContext.topicId && operationContext.agentId
         ? getPendingTopicRepos(operationContext.agentId)
         : [];
+    // A topic created by this send pins the model it was started with, same as
+    // the manual createTopic/saveToTopic and Gateway (AiAgentService) paths —
+    // generation and ChatInput display resolve from it (topicSelectors.getTopicModelById).
+    const newTopicModelSnapshot = !operationContext.topicId
+      ? snapshotAgentModelMetadata(operationContext.agentId)
+      : undefined;
     // Example: a pending repo topic without this metadata renders under "No directory"
     // until the server topic replaces `tmp_topic_*`.
     const optimisticTopicMetadata: ChatTopicMetadata | undefined =
       pendingTopicRepos.length > 0
         ? {
+            ...newTopicModelSnapshot,
             repos: pendingTopicRepos,
             workingDirectory: pendingTopicRepos[0],
             workingDirectoryConfig: { path: pendingTopicRepos[0], repoType: 'github' },
           }
         : workingDirectory
           ? {
+              ...newTopicModelSnapshot,
               workingDirectory,
               ...(workingDirectoryConfig ? { workingDirectoryConfig } : {}),
             }
-          : undefined;
+          : newTopicModelSnapshot;
 
     const optimisticTopic: OptimisticTopicPlaceholder | undefined =
       !operationContext.topicId && !context.isolatedTopic
@@ -760,10 +769,11 @@ export class ConversationLifecycleActionImpl {
               ? {
                   metadata: workingDirectory
                     ? {
+                        ...newTopicModelSnapshot,
                         workingDirectory,
                         ...(workingDirectoryConfig ? { workingDirectoryConfig } : {}),
                       }
-                    : undefined,
+                    : newTopicModelSnapshot,
                   title: newTopicTitle,
                   topicMessageIds: messages.map((m) => m.id),
                 }
@@ -1144,6 +1154,7 @@ export class ConversationLifecycleActionImpl {
             : undefined,
           newTopic: !topicId
             ? {
+                metadata: newTopicModelSnapshot,
                 topicMessageIds: forceNewTopicFromExisting ? [] : messages.map((m) => m.id),
                 title: newTopicTitle,
               }
