@@ -23,6 +23,7 @@ import type {
   HeteroSessionScanResult,
 } from '@lobechat/types';
 
+import { compressTranscriptImage } from '@/modules/heterogeneousAgent/compressTranscriptImage';
 import { createLambdaFileStorePort } from '@/modules/heterogeneousAgent/fileStorePort';
 import { createLogger } from '@/utils/logger';
 
@@ -317,12 +318,15 @@ export default class HeteroSessionController extends ControllerModule {
 
       for (const image of images) {
         try {
-          const ref = image.data
-            ? await this.uploadImage({ data: image.data, mediaType: image.mediaType })
+          // downscale first: a Retina screenshot is commonly several MB, and one
+          // session can inline dozens of them
+          const bytes = image.data
+            ? compressTranscriptImage({ data: image.data, mediaType: image.mediaType })
             : undefined;
+          const ref = bytes ? await this.uploadImage(bytes) : undefined;
           // `undefined` → no file store to upload into; keep the placeholder
           uploaded.push(
-            ref ? { fileId: ref.fileId, mediaType: image.mediaType, url: ref.url } : image,
+            ref ? { fileId: ref.fileId, mediaType: bytes!.mediaType, url: ref.url } : image,
           );
         } catch (error) {
           logger.warn(`failed to upload transcript image: ${(error as Error).message}`);
