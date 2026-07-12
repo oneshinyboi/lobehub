@@ -21967,8 +21967,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "role": {
-          "name": "role",
+        "change_type": {
+          "name": "change_type",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -22323,8 +22323,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "resource_identifier": {
-          "name": "resource_identifier",
+        "resource_label": {
+          "name": "resource_label",
           "type": "text",
           "primaryKey": false,
           "notNull": false
