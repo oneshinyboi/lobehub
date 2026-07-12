@@ -110,6 +110,10 @@ export interface QueryMessagesOptions {
     path: string | null,
     file: { fileType: string; id?: string | null },
   ) => Promise<string>;
+  /**
+   * Skip the Work-summary assembly (see `QueryMessageParams.skipWorks`).
+   */
+  skipWorks?: boolean;
   timing?: ModelTimingContext;
   /**
    * Topic ID for MessageGroup aggregation queries
@@ -351,6 +355,7 @@ export class MessageModel {
       current = 0,
       pageSize = 1000,
       sessionId,
+      skipWorks,
       topicId,
       groupId,
       threadId,
@@ -400,6 +405,7 @@ export class MessageModel {
         current,
         pageSize,
         postProcessUrl: options.postProcessUrl,
+        skipWorks,
         timing,
         // Thread queries optionally add agent/session scope if provided
         where: agentCondition ? and(agentCondition, threadCondition) : threadCondition,
@@ -425,6 +431,7 @@ export class MessageModel {
         current,
         pageSize,
         postProcessUrl: options.postProcessUrl,
+        skipWorks,
         timing,
         topicId: topicId ?? undefined,
         where: whereCondition,
@@ -448,6 +455,7 @@ export class MessageModel {
       current,
       pageSize,
       postProcessUrl: options.postProcessUrl,
+      skipWorks,
       timing,
       topicId: topicId ?? undefined,
       where: whereCondition,
@@ -503,7 +511,15 @@ export class MessageModel {
    * @returns Messages with all related data, including MessageGroup nodes
    */
   queryWithWhere = async (options: QueryMessagesOptions = {}): Promise<UIChatMessage[]> => {
-    const { where, current = 0, pageSize = 1000, postProcessUrl, topicId, timing } = options;
+    const {
+      where,
+      current = 0,
+      pageSize = 1000,
+      postProcessUrl,
+      skipWorks,
+      topicId,
+      timing,
+    } = options;
     const totalStartedAt = Date.now();
     const offset = current * pageSize;
 
@@ -620,7 +636,9 @@ export class MessageModel {
       this.queryMessageChunkRelations(messageIds, timing),
       this.queryMessageQueryRelations(messageIds, timing),
       this.queryMessageThreadRelations(taskMessageIds, timing),
-      this.queryMessageWorkSummaries(result, timing),
+      skipWorks
+        ? ({} as Record<string, WorkSummaryItem[]>)
+        : this.queryMessageWorkSummaries(result, timing),
     ]);
 
     if (messageIds.length === 0 && messageGroupNodes.length === 0) {
