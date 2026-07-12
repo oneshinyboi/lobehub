@@ -159,7 +159,8 @@ export default class HeteroSessionController extends ControllerModule {
     const { filePath, source } = params;
     const root = source === 'claude-code' ? claudeProjectsRoot() : codexSessionsRoot();
     // IPC-exposed file read — only transcripts under the CLI roots are readable
-    if (!path.resolve(filePath).startsWith(root + '/')) {
+    const relative = path.relative(path.resolve(root), path.resolve(filePath));
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
       throw new Error(`refusing to read transcript outside ${root}`);
     }
 

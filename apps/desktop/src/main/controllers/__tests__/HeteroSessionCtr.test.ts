@@ -258,6 +258,16 @@ describe('HeteroSessionCtr', () => {
         controller.readLocalSession({ filePath: '/etc/passwd', source: 'claude-code' }),
       ).rejects.toThrow('outside');
     });
+
+    it('refuses a sibling directory that merely shares the root prefix', async () => {
+      const sibling = path.join(fakeHome, '.claude', 'projects-evil', 'sess.jsonl');
+      mkdirSync(path.dirname(sibling), { recursive: true });
+      writeFileSync(sibling, '');
+
+      await expect(
+        controller.readLocalSession({ filePath: sibling, source: 'claude-code' }),
+      ).rejects.toThrow('outside');
+    });
   });
 
   describe('dir prefs', () => {

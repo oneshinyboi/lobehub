@@ -207,8 +207,9 @@ const Content = memo<ContentProps>(({ agentId }) => {
         state = { ok: false };
       }
       setProgress((prev) => ({ ...prev, [sessionId]: state }));
+      if (state.ok) refreshTopic();
     },
-    [allSessions, importOne],
+    [allSessions, importOne, refreshTopic],
   );
 
   // the currently importing row scrolls into view
