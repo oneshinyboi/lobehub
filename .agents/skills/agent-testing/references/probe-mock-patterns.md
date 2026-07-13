@@ -1237,3 +1237,50 @@ nodeintegration, plugins, disablewebsecurity, allowpopups, preload, …`). The h
   ```
   Tag the resolved element with a `data-probe` attribute and drive it with `agent-browser click '[data-probe=...]'` (trusted CDP input, D18).
 - **Corollary**: the phantom also owns the tooltip text of whatever component it duplicates, so an `innerText`/aria grep can "find" a control that the user cannot see. Assert on `getBoundingClientRect()` before believing a control is present.
+
+### E23. ✅ "Failed to fetch dynamically imported module" points at the WRONG file — the failure is downstream
+
+- **Situation**: the SPA renders as a Case-1 blank page; console repeats
+  `TypeError: Failed to fetch dynamically imported module: …/src/routes/(main)/_layout/index.tsx?t=…`
+  (the `?t=` changes every reload, which reads like Vite thrashing).
+- **Doesn't work**: investigating the named module. Fetching that exact URL from the page returns
+  **200 with real content** (`fetch(url).then(r=>({status:r.status,len:...}))`), so the module the
+  error names is fine. The `?t=` churn is ordinary HMR invalidation, not the cause.
+- **Cause**: Vite reports the failure against the _dynamic-import parent_ when any module in its
+  transitive graph fails to transform. The real error only shows in Vite's **HMR overlay**, which a
+  DOM/innerText probe never sees — `#root.innerText.length` was 0 the whole time.
+- **Works**: take the screenshot and READ it (Case 1). The overlay states the truth verbatim — here
+  `[plugin:vite:import-analysis] Failed to resolve import "pinyin-pro" from
+"src/features/SettingsSearch/pinyin.ts"`, i.e. a dependency added on the trunk that the local
+  `node_modules` didn't have yet. `pnpm install` + restart fixed it. So after any rebase/pull, a blank
+  SPA is a missing-dep suspect before it is a code suspect.
+
+### C8. Persisted SWR cache serves a STALE agent config after a direct DB write — `internal_refreshAgentConfig` does not rescue it
+
+- **Situation**: seeding a fixture by writing `agents.agency_config` / `agents.model` straight into
+  Postgres, then reading it back in the app to drive a UI/runtime assertion.
+- **Doesn't work**: reloading the page, or calling `agent().internal_refreshAgentConfig(agentId)`.
+  Measured: after setting `agency_config = NULL` in the DB, the store still returned the old
+  `{subagent:{model:'deepseek-v4-pro'}}` across both. This is the B1/B3 persisted cache (IndexedDB +
+  localStorage), and it is genuinely deceptive here: it looks exactly like "the fallback logic is
+  broken" — a fixture bug wearing a product-bug costume.
+- **Works**: cold-load (B1 recipe — clear localStorage/sessionStorage/IndexedDB/caches), re-seed auth,
+  reopen. Then the store matches the DB. **Verify the fixture landed in the STORE, not just in the DB,
+  before asserting on anything downstream of it**:
+  ```js
+  var c = window.__LOBE_STORES.agent().agentMap[agentId];
+  JSON.stringify({ model: c.model, subagent: c.agencyConfig && c.agencyConfig.subagent });
+  ```
+
+### E24. Web (non-desktop) agent turns run the CLIENT runtime — no `agent_operations` row will ever appear
+
+- **Situation**: driving a real turn in the browser and polling `agent_operations` for the run.
+- **Doesn't work**: waiting for a server op. The web surface dispatches `execAgentRuntime` (client
+  runtime); the table stays empty and the run looks like it never started, even though the UI is
+  streaming a real answer. (Contrast E18, where a _cloud-connected desktop_ routes to the server.)
+- **Works**: pick the observable that matches the runtime you're on.
+  - client runtime → `messages.model` per row (`thread_id IS NOT NULL` = the sub-agent's isolation
+    thread), plus `window.__LOBE_STORES.chat().operations` for liveness.
+  - server runtime → drive it from the **CLI** (`lh agent run`), then read `agent_operations`.
+    Verifying a change that lives on BOTH paths means running BOTH surfaces — a green web run proves
+    nothing about the server executor, and vice versa.
