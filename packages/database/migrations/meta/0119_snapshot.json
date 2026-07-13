@@ -21973,8 +21973,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "source": {
-          "name": "source",
+        "source_tool_name": {
+          "name": "source_tool_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -22322,12 +22322,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "resource_label": {
-          "name": "resource_label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "user_id": {
           "name": "user_id",
