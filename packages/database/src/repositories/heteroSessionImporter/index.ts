@@ -253,7 +253,19 @@ export class HeteroSessionImporterRepo {
 
     const fresh = importMessages.filter((m) => !clientIdToDbId.has(m.clientId));
     const skipped = importMessages.length - fresh.length;
-    if (fresh.length === 0) return { inserted: 0, skipped };
+
+    // A re-import of an unchanged session inserts no messages, but is NOT a no-op:
+    // it is how a topic imported by an older version of this importer gets repaired
+    // (subagent threads that were never anchored to their tool call; images that
+    // were dropped before the uploader existed). So the file attachment below runs
+    // over ALL messages, not just the fresh ones.
+    if (fresh.length === 0) {
+      const repaired = await this.buildMessageFileRows(tx, importMessages, clientIdToDbId);
+      for (let i = 0; i < repaired.length; i += BATCH_SIZE) {
+        await tx.insert(messagesFiles).values(repaired.slice(i, i + BATCH_SIZE));
+      }
+      return { inserted: 0, skipped };
+    }
 
     // assign db ids first so parent references resolve across old + new rows
     for (const m of fresh) clientIdToDbId.set(m.clientId, idGenerator('messages'));
@@ -306,7 +318,7 @@ export class HeteroSessionImporterRepo {
         workspaceId: this.workspaceId ?? null,
       }));
 
-    const fileRows = await this.buildMessageFileRows(tx, fresh, clientIdToDbId);
+    const fileRows = await this.buildMessageFileRows(tx, importMessages, clientIdToDbId);
 
     for (let i = 0; i < messageRows.length; i += BATCH_SIZE) {
       await tx.insert(messages).values(messageRows.slice(i, i + BATCH_SIZE));
@@ -322,36 +334,74 @@ export class HeteroSessionImporterRepo {
   };
 
   /**
-   * Rows attaching the transcript's uploaded images to their messages. The
-   * images were uploaded by the client that read the transcript (only it holds
-   * the base64), so the ids arrive as untrusted input: resolve them against the
-   * caller's OWN files and silently drop anything else, or an import payload
+   * Rows attaching the transcript's uploaded images to their messages.
+   *
+   * The images were uploaded by the client that read the transcript (only it holds
+   * the base64), so the ids arrive as untrusted input: they are resolved against the
+   * caller's OWN files and anything else is dropped — otherwise an import payload
    * could staple another user's file onto a message.
+   *
+   * Dedupe is by file HASH, not file id, because the two are not interchangeable
+   * here: `file.createFile` dedupes the stored object globally but still mints a
+   * fresh per-user `files` row every call, so re-importing the same transcript
+   * yields a NEW id for bytes that are already attached. Keying on the id would
+   * staple the same screenshot onto the message again on every re-import.
    */
   private buildMessageFileRows = async (
     tx: any,
-    fresh: HeteroSessionImportMessage[],
+    importMessages: HeteroSessionImportMessage[],
     clientIdToDbId: Map<string, string>,
   ) => {
-    const claimed = [...new Set(fresh.flatMap((m) => m.fileIds ?? []))];
+    const claimed = [...new Set(importMessages.flatMap((m) => m.fileIds ?? []))];
     if (claimed.length === 0) return [];
 
-    const owned = await tx
-      .select({ id: files.id })
+    const owned: { hash: string | null; id: string }[] = await tx
+      .select({ hash: files.fileHash, id: files.id })
       .from(files)
       .where(and(inArray(files.id, claimed), this.scopeWhere(files)));
-    const ownedIds = new Set(owned.map((row: { id: string }) => row.id));
+    const hashOfClaimed = new Map(owned.map((row) => [row.id, row.hash]));
 
-    return fresh.flatMap((m) =>
-      (m.fileIds ?? [])
-        .filter((fileId) => ownedIds.has(fileId))
-        .map((fileId) => ({
+    // hashes already attached to these messages — the set a re-import must not re-add
+    const messageIds = [
+      ...new Set(
+        importMessages
+          .filter((m) => m.fileIds?.length)
+          .map((m) => clientIdToDbId.get(m.clientId))
+          .filter(Boolean) as string[],
+      ),
+    ];
+    if (messageIds.length === 0) return [];
+
+    const existingLinks: { hash: string | null; messageId: string }[] = await tx
+      .select({ hash: files.fileHash, messageId: messagesFiles.messageId })
+      .from(messagesFiles)
+      .innerJoin(files, eq(files.id, messagesFiles.fileId))
+      .where(inArray(messagesFiles.messageId, messageIds));
+    const attached = new Set(existingLinks.map((row) => `${row.messageId}::${row.hash}`));
+
+    const rows: {
+      fileId: string;
+      messageId: string;
+      userId: string;
+      workspaceId: string | null;
+    }[] = [];
+    for (const message of importMessages) {
+      const messageId = clientIdToDbId.get(message.clientId);
+      if (!messageId) continue;
+      for (const fileId of message.fileIds ?? []) {
+        if (!hashOfClaimed.has(fileId)) continue;
+        const key = `${messageId}::${hashOfClaimed.get(fileId)}`;
+        if (attached.has(key)) continue;
+        attached.add(key);
+        rows.push({
           fileId,
-          messageId: clientIdToDbId.get(m.clientId)!,
+          messageId,
           userId: this.userId,
           workspaceId: this.workspaceId ?? null,
-        })),
-    );
+        });
+      }
+    }
+    return rows;
   };
 
   /**

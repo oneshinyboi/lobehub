@@ -6,6 +6,7 @@ import { getTestDB } from '../../../core/getTestDB';
 import {
   agents,
   files,
+  globalFiles,
   messagePlugins,
   messages,
   messagesFiles,
@@ -315,6 +316,104 @@ describe('HeteroSessionImporterRepo.importSessions', () => {
 
     // stapling another user's file onto a message would leak it into this chat
     expect(attached.map((row) => row.fileId)).toEqual([own.id]);
+  });
+
+  it('repairs a re-imported session: attaches images to messages that were imported without them', async () => {
+    const repo = new HeteroSessionImporterRepo(serverDB, userId);
+
+    // what an older importer wrote: the messages, but no images at all
+    await repo.importSessions({ agentId, sessions: [basePayload()] });
+
+    await serverDB.insert(globalFiles).values({
+      creator: userId,
+      fileType: 'image/png',
+      hashId: 'hash-of-the-screenshot',
+      size: 128,
+      url: 'files/2026-07-01/shot.png',
+    });
+    const [firstUpload] = await serverDB
+      .insert(files)
+      .values({
+        fileHash: 'hash-of-the-screenshot',
+        fileType: 'image/png',
+        name: 'shot.png',
+        size: 128,
+        url: 'files/2026-07-01/shot.png',
+        userId,
+      })
+      .returning();
+
+    const withImage = basePayload();
+    withImage.messages[0].fileIds = [firstUpload.id];
+    const [result] = await repo.importSessions({ agentId, sessions: [withImage] });
+
+    // nothing new to insert — the repair is the whole point of the re-import
+    expect(result.insertedMessages).toBe(0);
+
+    const [userRow] = await serverDB
+      .select()
+      .from(messages)
+      .where(and(eq(messages.topicId, result.topicId), eq(messages.clientId, 'cc-s1-u1')));
+    const attached = await serverDB
+      .select()
+      .from(messagesFiles)
+      .where(eq(messagesFiles.messageId, userRow.id));
+    expect(attached.map((row) => row.fileId)).toEqual([firstUpload.id]);
+  });
+
+  it('does not re-attach the same image on a second re-import, despite a fresh file id', async () => {
+    const repo = new HeteroSessionImporterRepo(serverDB, userId);
+    const hash = 'hash-of-the-same-bytes';
+
+    // the stored object is deduped globally — both uploads land on this one row
+    await serverDB.insert(globalFiles).values({
+      creator: userId,
+      fileType: 'image/png',
+      hashId: hash,
+      size: 128,
+      url: 'files/2026-07-01/same.png',
+    });
+
+    const upload = async (name: string) => {
+      const [row] = await serverDB
+        .insert(files)
+        .values({
+          // `file.createFile` dedupes the stored OBJECT globally but still mints a
+          // fresh per-user row each call — so the same screenshot arrives with a new
+          // id on every re-import, and only the hash identifies it
+          fileHash: hash,
+          fileType: 'image/png',
+          name,
+          size: 128,
+          url: 'files/2026-07-01/same.png',
+          userId,
+        })
+        .returning();
+      return row;
+    };
+
+    const first = await upload('shot-1.png');
+    const payloadA = basePayload();
+    payloadA.messages[0].fileIds = [first.id];
+    const [result] = await repo.importSessions({ agentId, sessions: [payloadA] });
+
+    const second = await upload('shot-2.png');
+    const payloadB = basePayload();
+    payloadB.messages[0].fileIds = [second.id];
+    await repo.importSessions({ agentId, sessions: [payloadB] });
+
+    const [userRow] = await serverDB
+      .select()
+      .from(messages)
+      .where(and(eq(messages.topicId, result.topicId), eq(messages.clientId, 'cc-s1-u1')));
+    const attached = await serverDB
+      .select()
+      .from(messagesFiles)
+      .where(eq(messagesFiles.messageId, userRow.id));
+
+    // keying on the file id instead of the hash would show the screenshot twice
+    expect(attached).toHaveLength(1);
+    expect(attached[0].fileId).toBe(first.id);
   });
 
   it('keeps message order when the source repeats identical timestamps', async () => {

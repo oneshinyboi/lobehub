@@ -20,7 +20,13 @@ import { useChatStore } from '@/store/chat';
 
 import { SessionRow } from './SessionList';
 import SidebarTree, { type TreeScope } from './SidebarTree';
-import { deriveSessionStatus, dirKeyOf, fmtTokens, type ImportRowState, selectable } from './utils';
+import {
+  bulkSelectable,
+  deriveSessionStatus,
+  dirKeyOf,
+  fmtTokens,
+  type ImportRowState,
+} from './utils';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   footer: css`
@@ -117,7 +123,9 @@ const Content = memo<ContentProps>(({ agentId }) => {
       } else if (group.source !== scope) return false;
     }
     const sessionStatus = statusOf(digest);
-    if (hideImported && !selectable(sessionStatus)) return false;
+    // "Hide imported" hides the rows with nothing new to bring in — an imported
+    // session is still pickable (a re-import repairs it), just not interesting here
+    if (hideImported && !bulkSelectable(sessionStatus)) return false;
     if (kw && !(digest.title ?? digest.firstPrompt ?? '').toLowerCase().includes(kw)) return false;
     return true;
   });
@@ -131,7 +139,10 @@ const Content = memo<ContentProps>(({ agentId }) => {
   const estMessages = selectedItems.reduce((sum, { digest }) => sum + digest.messageCount, 0);
   const estTokens = selectedItems.reduce((sum, { digest }) => sum + (digest.tokens ?? 0), 0);
 
-  const visibleSelectable = visible.filter(({ digest }) => selectable(statusOf(digest)));
+  // Select all sweeps only the rows that have something to import — never the
+  // already-imported ones, or one click would re-read and re-upload a machine's
+  // entire transcript history for no new content
+  const visibleSelectable = visible.filter(({ digest }) => bulkSelectable(statusOf(digest)));
   const allChecked =
     visibleSelectable.length > 0 &&
     visibleSelectable.every(({ digest }) => selected.has(digest.sessionId));

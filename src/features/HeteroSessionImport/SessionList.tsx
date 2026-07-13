@@ -9,7 +9,14 @@ import { Check, RotateCcw, X } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { baseName, fmtTokens, type ImportRowState, selectable, type SessionStatus } from './utils';
+import {
+  baseName,
+  bulkSelectable,
+  fmtTokens,
+  type ImportRowState,
+  pickable,
+  type SessionStatus,
+} from './utils';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   row: css`
@@ -120,8 +127,10 @@ export const SessionRow = memo<SessionRowProps>(
   ({ item, checked, importing, importState, onRetry, onToggle, showDir, showRetry }) => {
     const { t } = useTranslation('topic');
     const { digest, status } = item;
-    const canPick = selectable(status) && !importing;
-    const dim = !selectable(status);
+    const canPick = pickable(status) && !importing;
+    // an already-imported session recedes visually, but stays pickable: re-importing
+    // is idempotent, and it is the only way to repair rows an older importer wrote
+    const dim = !bulkSelectable(status);
     const Brand = BRAND[digest.source];
 
     return (
@@ -137,7 +146,7 @@ export const SessionRow = memo<SessionRowProps>(
         {!importing && (
           <Checkbox
             checked={checked}
-            disabled={!selectable(status)}
+            disabled={!pickable(status)}
             onChange={() => onToggle(digest.sessionId)}
             onClick={(e) => e.stopPropagation()}
           />
