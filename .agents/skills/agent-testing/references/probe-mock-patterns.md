@@ -1081,6 +1081,7 @@ nodeintegration, plugins, disablewebsecurity, allowpopups, preload, …`). The h
 - **Works**: seed an `agents` row and set `topics.agent_id` (and `messages.agent_id`)
   before opening the share page. Verify the fetch actually fired via
   `agent-browser network requests | grep getMessages`, not by waiting on the UI.
+
 ### E15. ✅ Next dev does NOT hot-reload `apps/server/**` — you are testing STALE compiled server code
 
 - **Situation**: verifying a working-tree change inside `apps/server/src/**` (an agent-runtime
@@ -1130,3 +1131,24 @@ nodeintegration, plugins, disablewebsecurity, allowpopups, preload, …`). The h
   `window.__LOBE_STORES.aiInfra().enabledChatModelList` → `[{id: provider, children: [{id: model}]}]` —
   and pick one from there. Also: a send that "resolves fine but creates no operation" is a UI-gate
   symptom; **screenshot the composer** instead of re-reading your store call.
+
+### E18. The default `lobehub-dev` browser session is shared — a parallel run can steal your tab
+
+- **Situation**: driving the Web surface with `agent-browser --session lobehub-dev` while another
+  agent-testing run (another worktree, another terminal, another agent) is active on the same machine.
+- **Doesn't work**: the session is keyed by name, not by workspace, so both runs drive the **same
+  browser**. The other run navigates the tab to _its_ dev server, and from then on your `eval` reads
+  that page while your `screenshot` may still show yours. The symptom is maddening: a screenshot that
+  clearly renders your fixture, and a `document.body.innerText` from the same moment that does not
+  contain a single one of its strings — every assertion reads `false`, including ones you can see are
+  true. It looks like a rendering bug in the product; it is two runs sharing one browser.
+- **Works**: give every run its own session name and seed auth into it, then confirm the tab really is
+  yours before asserting anything:
+  ```bash
+  SESSION=my-feature-e2e ./.agents/skills/agent-testing/scripts/setup-auth.sh web-seed
+  agent-browser --session my-feature-e2e open "$SERVER_URL/..."
+  agent-browser --session my-feature-e2e tab list # must print YOUR port and path
+  ```
+  `tab list` is the cheap check that turns this from an hour of confusion into ten seconds. Note the
+  same applies to ports: a worktree allocates its own `SERVER_PORT`/`SPA_PORT`, so never assume the
+  ports from another checkout — always re-run `test-env.sh` inside the worktree you are testing.
