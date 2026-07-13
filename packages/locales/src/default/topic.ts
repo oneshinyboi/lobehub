@@ -33,6 +33,7 @@ export default {
   'actions.removeTopic': 'Delete Topic',
   'actions.removeUnstarred': 'Delete Unstarred Topics',
   'defaultTitle': 'Default Topic',
+  'doctor.checkFailed': 'The check could not be completed.',
   'doctor.healthy': 'Every message in this topic is showing. Nothing to fix.',
   'doctor.issue.concurrent-fork':
     'A new question was sent while the previous run was still writing, so the conversation split in two and one side is hidden — {{count}} messages.',
