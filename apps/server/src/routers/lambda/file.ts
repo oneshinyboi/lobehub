@@ -166,11 +166,37 @@ export const fileRouter = router({
     .input(
       UploadFileSchema.omit({ url: true }).extend({
         parentId: z.string().optional(),
+        /**
+         * Opt in to reusing the caller's OWN existing record for these exact bytes
+         * instead of minting a duplicate row.
+         *
+         * Off by default, and it must stay that way: two uploads of identical bytes
+         * are normally two distinct files — they can carry different names, live in
+         * different folders, and be deleted independently. Collapsing them would
+         * silently drop the second upload's `name`/`parentId`/`visibility`, and a
+         * later delete would cascade the attachment away from every message that
+         * shares the row.
+         *
+         * Turn it on when the bytes are addressed purely by content and the caller
+         * re-derives them on every run — e.g. images lifted out of an agent
+         * transcript, where a re-import would otherwise add one dead `files` row per
+         * image, per run.
+         */
+        reuseExistingUserFile: z.boolean().optional(),
         url: z.string(),
         visibility: z.enum(['private', 'public']).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      if (input.reuseExistingUserFile && input.hash) {
+        const owned = await ctx.fileModel.findOwnedByHash(input.hash);
+        if (owned)
+          return {
+            id: owned.id,
+            url: await ctx.fileService.getFileAccessUrl({ id: owned.id, url: owned.url }),
+          };
+      }
+
       const existingFile = await ctx.fileModel.checkHash(input.hash!);
       const { isExist } = existingFile;
 

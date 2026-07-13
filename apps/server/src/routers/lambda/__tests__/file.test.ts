@@ -38,6 +38,7 @@ function createCallerWithCtx(partialCtx: any = {}) {
     checkHash: vi.fn().mockResolvedValue({ isExist: true }),
     create: vi.fn().mockResolvedValue({ id: 'test-id' }),
     findById: vi.fn().mockResolvedValue(undefined),
+    findOwnedByHash: vi.fn().mockResolvedValue(undefined),
     findByIds: vi.fn().mockResolvedValue([]),
     query: vi.fn().mockResolvedValue([]),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -155,6 +156,7 @@ const mockFileModelDelete = vi.fn();
 const mockFileModelDeleteMany = vi.fn();
 const mockFileModelFindById = vi.fn();
 const mockFileModelFindByIds = vi.fn();
+const mockFileModelFindOwnedByHash = vi.fn();
 const mockFileModelQuery = vi.fn();
 const mockFileModelUpdateGlobalFile = vi.fn();
 const mockFileModelClear = vi.fn();
@@ -169,6 +171,7 @@ vi.mock('@/database/models/file', () => ({
     deleteMany: mockFileModelDeleteMany,
     findById: mockFileModelFindById,
     findByIds: mockFileModelFindByIds,
+    findOwnedByHash: mockFileModelFindOwnedByHash,
     query: mockFileModelQuery,
     updateGlobalFile: mockFileModelUpdateGlobalFile,
     clear: mockFileModelClear,
@@ -339,6 +342,52 @@ describe('fileRouter', () => {
       expect(result).toEqual({
         id: 'new-file-id',
         url: 'https://lobehub.com/f/new-file-id',
+      });
+    });
+
+    describe('reuseExistingUserFile', () => {
+      const reuseInput = {
+        fileType: 'image/png',
+        hash: 'same-bytes',
+        metadata: {},
+        name: 'shot.png',
+        size: 100,
+        url: 'files/shot.png',
+      };
+
+      it('returns the caller existing record instead of minting a duplicate', async () => {
+        mockFileModelFindOwnedByHash.mockResolvedValue({
+          id: 'already-mine',
+          url: 'files/shot.png',
+        });
+
+        const result = await caller.createFile({ ...reuseInput, reuseExistingUserFile: true });
+
+        expect(result).toEqual({ id: 'already-mine', url: 'https://lobehub.com/f/already-mine' });
+        expect(mockFileModelCreate).not.toHaveBeenCalled();
+      });
+
+      it('falls through to a normal create when the caller has no record for those bytes', async () => {
+        // a GLOBAL hash hit says the object is stored, not that the caller owns a row
+        mockFileModelFindOwnedByHash.mockResolvedValue(undefined);
+        mockFileModelCreate.mockResolvedValue({ id: 'fresh-id' });
+
+        const result = await caller.createFile({ ...reuseInput, reuseExistingUserFile: true });
+
+        expect(result.id).toBe('fresh-id');
+        expect(mockFileModelCreate).toHaveBeenCalled();
+      });
+
+      it('is opt-in: without the flag, identical bytes still create a second record', async () => {
+        // two uploads of the same bytes are normally two distinct files — they can
+        // carry different names, live in different folders, and be deleted apart
+        mockFileModelFindOwnedByHash.mockResolvedValue({ id: 'already-mine', url: 'x' });
+        mockFileModelCreate.mockResolvedValue({ id: 'second-copy' });
+
+        const result = await caller.createFile(reuseInput);
+
+        expect(result.id).toBe('second-copy');
+        expect(mockFileModelFindOwnedByHash).not.toHaveBeenCalled();
       });
     });
 

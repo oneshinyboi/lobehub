@@ -15,6 +15,15 @@ export interface FileStoreCreateFileInput {
   hash: string;
   metadata: { date: string; dirname: string; filename: string; path: string };
   name: string;
+  /**
+   * Reuse the caller's own record for these bytes instead of minting a duplicate.
+   *
+   * Always on for these images: they are addressed purely by content and are
+   * re-derived from the transcript on every run, so a re-import (or a CLI that
+   * reads the same screenshot twice) would otherwise leave one dead `files` row
+   * per image, per run, in the user's file list.
+   */
+  reuseExistingUserFile?: boolean;
   size: number;
   url: string;
 }
@@ -78,6 +87,7 @@ export const createFileStoreImageUploader =
       hash,
       metadata: { date, dirname: '', filename: fileName, path: pathname },
       name: fileName,
+      reuseExistingUserFile: true,
       size: buffer.length,
       url: pathname,
     });

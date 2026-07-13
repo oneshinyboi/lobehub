@@ -149,6 +149,51 @@ describe('FileModel', () => {
     });
   });
 
+  describe('findOwnedByHash', () => {
+    const seed = async (hash: string, owner: string) => {
+      await serverDB
+        .insert(globalFiles)
+        .values({
+          creator: owner,
+          fileType: 'image/png',
+          hashId: hash,
+          size: 100,
+          url: `https://example.com/${hash}.png`,
+        })
+        .onConflictDoNothing();
+      const [row] = await serverDB
+        .insert(files)
+        .values({
+          fileHash: hash,
+          fileType: 'image/png',
+          name: `${hash}.png`,
+          size: 100,
+          url: `https://example.com/${hash}.png`,
+          userId: owner,
+        })
+        .returning();
+      return row;
+    };
+
+    it('returns the caller own record for these bytes', async () => {
+      const own = await seed('shared-bytes', userId);
+
+      expect((await fileModel.findOwnedByHash('shared-bytes'))?.id).toBe(own.id);
+    });
+
+    it('does not return another user record for the same bytes', async () => {
+      // the object is deduped GLOBALLY, so another user having it says nothing
+      // about whether the caller has a record of their own
+      await seed('shared-bytes', 'user2');
+
+      expect(await fileModel.findOwnedByHash('shared-bytes')).toBeUndefined();
+    });
+
+    it('returns undefined when the caller has no record for these bytes', async () => {
+      expect(await fileModel.findOwnedByHash('never-uploaded')).toBeUndefined();
+    });
+  });
+
   describe('delete', () => {
     it('should delete a file by id', async () => {
       await fileModel.createGlobalFile({

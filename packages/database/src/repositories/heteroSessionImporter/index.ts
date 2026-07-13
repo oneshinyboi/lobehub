@@ -341,11 +341,12 @@ export class HeteroSessionImporterRepo {
    * caller's OWN files and anything else is dropped — otherwise an import payload
    * could staple another user's file onto a message.
    *
-   * Dedupe is by file HASH, not file id, because the two are not interchangeable
-   * here: `file.createFile` dedupes the stored object globally but still mints a
-   * fresh per-user `files` row every call, so re-importing the same transcript
-   * yields a NEW id for bytes that are already attached. Keying on the id would
-   * staple the same screenshot onto the message again on every re-import.
+   * Dedupe is by file HASH, not file id. The desktop uploader asks `file.createFile`
+   * to reuse the caller's existing record for identical bytes, so in practice a
+   * re-import hands back the SAME id — but that is the uploader's choice, not an
+   * invariant of this input. A caller that does not opt in mints a fresh row per
+   * upload, and keying on the id would then staple the same screenshot onto the
+   * message again on every re-import. The hash is the thing that is actually stable.
    */
   private buildMessageFileRows = async (
     tx: any,

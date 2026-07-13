@@ -526,6 +526,19 @@ export class FileModel {
     return candidateIds.filter((id) => !referencedElsewhere.has(id));
   };
 
+  /**
+   * The caller's OWN file record for these bytes, if they already have one.
+   *
+   * `checkHash` answers a different question: it looks in `global_files`, which is
+   * shared across users and only tells you the object is already stored — the
+   * caller may still have no row of their own. Callers that want to reuse their
+   * existing record (rather than mint a duplicate for identical bytes) need this.
+   */
+  findOwnedByHash = async (hash: string): Promise<FileItem | undefined> =>
+    this.db.query.files.findFirst({
+      where: and(eq(files.fileHash, hash), this.ownership()),
+    }) as Promise<FileItem | undefined>;
+
   countFilesByHash = async (hash: string) => {
     const result = await this.db
       .select({
