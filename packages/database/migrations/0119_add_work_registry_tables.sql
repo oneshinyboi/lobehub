@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS "works" (
 	"current_version_id" uuid,
 	"resource_type" text NOT NULL,
 	"resource_id" text,
+	"topic_id" text,
+	"thread_id" text,
 	"source_tool_identifier" text,
 	"title" text,
 	"description" text,
@@ -60,6 +62,10 @@ ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_user_id_use
 ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_topic_id_topics_id_fk";--> statement-breakpoint
+ALTER TABLE "works" ADD CONSTRAINT "works_topic_id_topics_id_fk" FOREIGN KEY ("topic_id") REFERENCES "public"."topics"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_thread_id_threads_id_fk";--> statement-breakpoint
+ALTER TABLE "works" ADD CONSTRAINT "works_thread_id_threads_id_fk" FOREIGN KEY ("thread_id") REFERENCES "public"."threads"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_user_id_users_id_fk";--> statement-breakpoint
 ALTER TABLE "works" ADD CONSTRAINT "works_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_workspace_id_workspaces_id_fk";--> statement-breakpoint
@@ -80,4 +86,6 @@ CREATE INDEX IF NOT EXISTS "works_user_id_idx" ON "works" USING btree ("user_id"
 CREATE INDEX IF NOT EXISTS "works_workspace_id_idx" ON "works" USING btree ("workspace_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_resource_idx" ON "works" USING btree ("resource_type","resource_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_current_version_id_idx" ON "works" USING btree ("current_version_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "works_updated_at_idx" ON "works" USING btree ("updated_at");
+CREATE INDEX IF NOT EXISTS "works_updated_at_idx" ON "works" USING btree ("updated_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "works_topic_id_idx" ON "works" USING btree ("topic_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "works_thread_id_idx" ON "works" USING btree ("thread_id");

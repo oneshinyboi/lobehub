@@ -6,7 +6,7 @@
   },
   "dialect": "postgresql",
   "enums": {},
-  "id": "9a714b64-64fa-48a1-aa9f-1e35aaeafa5f",
+  "id": "2d72b971-a137-4bef-a9c0-c8824db4283d",
   "policies": {},
   "prevId": "8f880aef-6d25-4875-aaa9-d01d12e5d5c2",
   "roles": {},
@@ -9355,6 +9355,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "topic_id": {
+          "name": "topic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "source_tool_identifier": {
           "name": "source_tool_identifier",
           "type": "text",
@@ -9561,9 +9573,57 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "works_topic_id_idx": {
+          "name": "works_topic_id_idx",
+          "columns": [
+            {
+              "expression": "topic_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "works_thread_id_idx": {
+          "name": "works_thread_id_idx",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
+        "works_topic_id_topics_id_fk": {
+          "name": "works_topic_id_topics_id_fk",
+          "tableFrom": "works",
+          "tableTo": "topics",
+          "columnsFrom": ["topic_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "works_thread_id_threads_id_fk": {
+          "name": "works_thread_id_threads_id_fk",
+          "tableFrom": "works",
+          "tableTo": "threads",
+          "columnsFrom": ["thread_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
         "works_user_id_users_id_fk": {
           "name": "works_user_id_users_id_fk",
           "tableFrom": "works",
