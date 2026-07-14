@@ -113,17 +113,17 @@ export class OIDCService {
 
     const db = await getServerDB();
     const record = await db.query.oidcClients.findFirst({
-      columns: { name: true, ownerId: true, policyUri: true },
+      columns: { name: true, userId: true, policyUri: true },
       where: eq(oidcClients.id, clientId),
     });
 
     if (!record) return base;
 
     let developerName: string | undefined;
-    if (record.ownerId) {
+    if (record.userId) {
       const owner = await db.query.users.findFirst({
         columns: { fullName: true, username: true },
-        where: eq(users.id, record.ownerId),
+        where: eq(users.id, record.userId),
       });
       developerName = owner?.fullName || owner?.username || undefined;
     }

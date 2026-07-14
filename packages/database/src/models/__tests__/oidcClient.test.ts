@@ -31,7 +31,7 @@ describe('OidcClientModel', () => {
 
       expect(result.id).toMatch(/^lca_[\dA-Za-z]{24}$/);
       expect(result.name).toBe('My App');
-      expect(result.ownerId).toBe(userId);
+      expect(result.userId).toBe(userId);
       expect(result.enabled).toBe(true);
       expect(result.isFirstParty).toBe(false);
       expect(result.clientSecret).toBeNull();
@@ -66,7 +66,7 @@ describe('OidcClientModel', () => {
         grants: [],
         id: 'lca_older',
         name: 'Older',
-        ownerId: userId,
+        userId,
         redirectUris: [],
         responseTypes: [],
         scopes: [],
@@ -77,7 +77,7 @@ describe('OidcClientModel', () => {
         grants: [],
         id: 'lca_newer',
         name: 'Newer',
-        ownerId: userId,
+        userId,
         redirectUris: [],
         responseTypes: [],
         scopes: [],

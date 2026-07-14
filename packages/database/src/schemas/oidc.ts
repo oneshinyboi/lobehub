@@ -3,6 +3,7 @@ import { createInsertSchema, createSelectSchema } from 'drizzle-zod';
 
 import { timestamps, timestamptz } from './_helpers';
 import { users } from './user';
+import { workspaces } from './workspace';
 
 /**
  * OIDC authorization code
@@ -150,13 +151,15 @@ export const oidcClients = pgTable(
     policyUri: text('policy_uri'),
     tosUri: text('tos_uri'),
     isFirstParty: boolean('is_first_party').default(false),
-    ownerId: text('owner_id').references(() => users.id, { onDelete: 'cascade' }),
-    enabled: boolean('enabled').notNull().default(true),
+    userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').default(true),
     lastUsedAt: timestamptz('last_used_at'),
     ...timestamps,
   },
   (t) => ({
-    ownerIdIdx: index('oidc_clients_owner_id_idx').on(t.ownerId),
+    userIdIdx: index('oidc_clients_user_id_idx').on(t.userId),
+    workspaceIdIdx: index('oidc_clients_workspace_id_idx').on(t.workspaceId),
   }),
 );
 

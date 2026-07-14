@@ -1456,15 +1456,17 @@ table oidc_clients {
   policy_uri text
   tos_uri text
   is_first_party boolean [default: false]
-  owner_id text
-  enabled boolean [not null, default: true]
+  user_id text
+  workspace_id text
+  enabled boolean [default: true]
   last_used_at "timestamp with time zone"
   accessed_at "timestamp with time zone" [not null, default: `now()`]
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
-    owner_id [name: 'oidc_clients_owner_id_idx']
+    user_id [name: 'oidc_clients_user_id_idx']
+    workspace_id [name: 'oidc_clients_workspace_id_idx']
   }
 }
 

@@ -30,14 +30,16 @@ const generateClientId = () => `lca_${createNanoId(24)()}`;
 
 export class OidcClientModel {
   private userId: string;
+  private workspaceId?: string | null;
   private db: LobeChatDatabase;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string | null) {
     this.db = db;
     this.userId = userId;
+    this.workspaceId = workspaceId;
   }
 
-  private ownership = () => eq(oidcClients.ownerId, this.userId);
+  private ownership = () => eq(oidcClients.userId, this.userId);
 
   create = async (params: CreateOidcClientParams) => {
     const [result] = await this.db
@@ -51,11 +53,12 @@ export class OidcClientModel {
         isFirstParty: false,
         logoUri: params.logoUri,
         name: params.name,
-        ownerId: this.userId,
         redirectUris: [],
         responseTypes: [],
         scopes: DEFAULT_SCOPES,
         tokenEndpointAuthMethod: 'none',
+        userId: this.userId,
+        workspaceId: this.workspaceId,
       })
       .returning();
 

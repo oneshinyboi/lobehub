@@ -281,7 +281,7 @@ describe('OIDCService', () => {
     });
     dbMocks.findFirstClient.mockResolvedValue({
       name: 'Third Party App',
-      ownerId: 'user-1',
+      userId: 'user-1',
       policyUri: null,
     });
     dbMocks.findFirstUser.mockResolvedValue({ fullName: 'Jane Doe', username: 'jane' });
@@ -303,7 +303,7 @@ describe('OIDCService', () => {
     provider.Client.find.mockResolvedValue({ metadata: () => ({}) });
     dbMocks.findFirstClient.mockResolvedValue({
       name: 'Nameless App',
-      ownerId: 'user-2',
+      userId: 'user-2',
       policyUri: 'https://nameless.app/privacy',
     });
     dbMocks.findFirstUser.mockResolvedValue({ fullName: null, username: null });

@@ -9,7 +9,7 @@ const oauthAppProcedure = authedProcedure.use(serverDatabase).use(async (opts) =
 
   return opts.next({
     ctx: {
-      oidcClientModel: new OidcClientModel(ctx.serverDB, ctx.userId),
+      oidcClientModel: new OidcClientModel(ctx.serverDB, ctx.userId, ctx.workspaceId),
     },
   });
 });

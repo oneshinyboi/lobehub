@@ -6,7 +6,7 @@
   },
   "dialect": "postgresql",
   "enums": {},
-  "id": "746ac512-4a03-49a1-80a5-9f9441649be8",
+  "id": "78b65fe0-5b57-486d-8e4f-6ff17bff6305",
   "policies": {},
   "prevId": "8f880aef-6d25-4875-aaa9-d01d12e5d5c2",
   "roles": {},
@@ -12126,8 +12126,14 @@
           "notNull": false,
           "default": false
         },
-        "owner_id": {
-          "name": "owner_id",
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -12136,7 +12142,7 @@
           "name": "enabled",
           "type": "boolean",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "default": true
         },
         "last_used_at": {
@@ -12168,11 +12174,26 @@
         }
       },
       "indexes": {
-        "oidc_clients_owner_id_idx": {
-          "name": "oidc_clients_owner_id_idx",
+        "oidc_clients_user_id_idx": {
+          "name": "oidc_clients_user_id_idx",
           "columns": [
             {
-              "expression": "owner_id",
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "oidc_clients_workspace_id_idx": {
+          "name": "oidc_clients_workspace_id_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -12185,11 +12206,20 @@
         }
       },
       "foreignKeys": {
-        "oidc_clients_owner_id_users_id_fk": {
-          "name": "oidc_clients_owner_id_users_id_fk",
+        "oidc_clients_user_id_users_id_fk": {
+          "name": "oidc_clients_user_id_users_id_fk",
           "tableFrom": "oidc_clients",
           "tableTo": "users",
-          "columnsFrom": ["owner_id"],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "oidc_clients_workspace_id_workspaces_id_fk": {
+          "name": "oidc_clients_workspace_id_workspaces_id_fk",
+          "tableFrom": "oidc_clients",
+          "tableTo": "workspaces",
+          "columnsFrom": ["workspace_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
