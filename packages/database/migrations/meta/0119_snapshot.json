@@ -6,7 +6,7 @@
   },
   "dialect": "postgresql",
   "enums": {},
-  "id": "a4723ca2-372c-4363-98eb-dae3847f29a5",
+  "id": "9db20eb0-8da6-4153-9c34-7135661c5cce",
   "policies": {},
   "prevId": "8f880aef-6d25-4875-aaa9-d01d12e5d5c2",
   "roles": {},
@@ -22004,14 +22004,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "source_tool_name": {
-          "name": "source_tool_name",
+        "tool_name": {
+          "name": "tool_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "source_tool_identifier": {
-          "name": "source_tool_identifier",
+        "tool_identifier": {
+          "name": "tool_identifier",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -22028,8 +22028,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_message_id": {
-          "name": "source_message_id",
+        "message_id": {
+          "name": "message_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -22040,8 +22040,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_tool_call_id": {
-          "name": "source_tool_call_id",
+        "tool_call_id": {
+          "name": "tool_call_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -22067,18 +22067,6 @@
         "cumulative_usage": {
           "name": "cumulative_usage",
           "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -22112,8 +22100,8 @@
           "method": "btree",
           "with": {}
         },
-        "work_versions_work_id_source_tool_call_id_unique": {
-          "name": "work_versions_work_id_source_tool_call_id_unique",
+        "work_versions_work_id_tool_call_id_unique": {
+          "name": "work_versions_work_id_tool_call_id_unique",
           "columns": [
             {
               "expression": "work_id",
@@ -22122,44 +22110,14 @@
               "nulls": "last"
             },
             {
-              "expression": "source_tool_call_id",
+              "expression": "tool_call_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"work_versions\".\"source_tool_call_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "work_versions_work_id_idx": {
-          "name": "work_versions_work_id_idx",
-          "columns": [
-            {
-              "expression": "work_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "work_versions_topic_id_idx": {
-          "name": "work_versions_topic_id_idx",
-          "columns": [
-            {
-              "expression": "topic_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
+          "where": "\"work_versions\".\"tool_call_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -22179,11 +22137,11 @@
           "method": "btree",
           "with": {}
         },
-        "work_versions_source_message_id_idx": {
-          "name": "work_versions_source_message_id_idx",
+        "work_versions_message_id_idx": {
+          "name": "work_versions_message_id_idx",
           "columns": [
             {
-              "expression": "source_message_id",
+              "expression": "message_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -22194,11 +22152,11 @@
           "method": "btree",
           "with": {}
         },
-        "work_versions_root_operation_id_idx": {
-          "name": "work_versions_root_operation_id_idx",
+        "work_versions_actor_agent_id_idx": {
+          "name": "work_versions_actor_agent_id_idx",
           "columns": [
             {
-              "expression": "root_operation_id",
+              "expression": "actor_agent_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -22214,6 +22172,27 @@
           "columns": [
             {
               "expression": "root_operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "work_versions_topic_created_at_idx": {
+          "name": "work_versions_topic_created_at_idx",
+          "columns": [
+            {
+              "expression": "topic_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -22256,51 +22235,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "work_versions_user_id_idx": {
-          "name": "work_versions_user_id_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "work_versions_workspace_id_idx": {
-          "name": "work_versions_workspace_id_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "work_versions_created_at_idx": {
-          "name": "work_versions_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -22331,11 +22265,11 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "work_versions_source_message_id_messages_id_fk": {
-          "name": "work_versions_source_message_id_messages_id_fk",
+        "work_versions_message_id_messages_id_fk": {
+          "name": "work_versions_message_id_messages_id_fk",
           "tableFrom": "work_versions",
           "tableTo": "messages",
-          "columnsFrom": ["source_message_id"],
+          "columnsFrom": ["message_id"],
           "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
@@ -22347,24 +22281,6 @@
           "columnsFrom": ["actor_agent_id"],
           "columnsTo": ["id"],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "work_versions_user_id_users_id_fk": {
-          "name": "work_versions_user_id_users_id_fk",
-          "tableFrom": "work_versions",
-          "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "work_versions_workspace_id_workspaces_id_fk": {
-          "name": "work_versions_workspace_id_workspaces_id_fk",
-          "tableFrom": "work_versions",
-          "tableTo": "workspaces",
-          "columnsFrom": ["workspace_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -22408,24 +22324,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "source_topic_id": {
-          "name": "source_topic_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_thread_id": {
-          "name": "source_thread_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_tool_identifier": {
-          "name": "source_tool_identifier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "title": {
           "name": "title",
           "type": "text",
@@ -22434,6 +22332,42 @@
         },
         "description": {
           "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tool_name": {
+          "name": "tool_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tool_identifier": {
+          "name": "tool_identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "root_operation_id": {
+          "name": "root_operation_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -22608,107 +22542,36 @@
           "method": "btree",
           "with": {}
         },
-        "works_resource_idx": {
-          "name": "works_resource_idx",
+        "works_root_operation_updated_at_id_idx": {
+          "name": "works_root_operation_updated_at_id_idx",
           "columns": [
             {
-              "expression": "resource_type",
+              "expression": "root_operation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "resource_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "works_current_version_id_idx": {
-          "name": "works_current_version_id_idx",
-          "columns": [
-            {
-              "expression": "current_version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "works_updated_at_idx": {
-          "name": "works_updated_at_idx",
-          "columns": [
-            {
               "expression": "updated_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "works_source_topic_id_idx": {
-          "name": "works_source_topic_id_idx",
-          "columns": [
+            },
             {
-              "expression": "source_topic_id",
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "works_source_thread_id_idx": {
-          "name": "works_source_thread_id_idx",
-          "columns": [
-            {
-              "expression": "source_thread_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
+          "where": "\"works\".\"root_operation_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
         }
       },
       "foreignKeys": {
-        "works_source_topic_id_topics_id_fk": {
-          "name": "works_source_topic_id_topics_id_fk",
-          "tableFrom": "works",
-          "tableTo": "topics",
-          "columnsFrom": ["source_topic_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "works_source_thread_id_threads_id_fk": {
-          "name": "works_source_thread_id_threads_id_fk",
-          "tableFrom": "works",
-          "tableTo": "threads",
-          "columnsFrom": ["source_thread_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
         "works_user_id_users_id_fk": {
           "name": "works_user_id_users_id_fk",
           "tableFrom": "works",
