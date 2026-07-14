@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS "work_versions" (
 	"message_id" text,
 	"root_operation_id" text,
 	"tool_call_id" text,
-	"actor_agent_id" text,
+	"agent_id" text,
 	"metadata" jsonb,
 	"cumulative_cost" numeric(20, 6),
 	"cumulative_usage" jsonb,
@@ -51,8 +51,8 @@ ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_thread_id_t
 ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_thread_id_threads_id_fk" FOREIGN KEY ("thread_id") REFERENCES "public"."threads"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_message_id_messages_id_fk";--> statement-breakpoint
 ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_message_id_messages_id_fk" FOREIGN KEY ("message_id") REFERENCES "public"."messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_actor_agent_id_agents_id_fk";--> statement-breakpoint
-ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_actor_agent_id_agents_id_fk" FOREIGN KEY ("actor_agent_id") REFERENCES "public"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "work_versions" DROP CONSTRAINT IF EXISTS "work_versions_agent_id_agents_id_fk";--> statement-breakpoint
+ALTER TABLE "work_versions" ADD CONSTRAINT "work_versions_agent_id_agents_id_fk" FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_user_id_users_id_fk";--> statement-breakpoint
 ALTER TABLE "works" ADD CONSTRAINT "works_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "works" DROP CONSTRAINT IF EXISTS "works_workspace_id_workspaces_id_fk";--> statement-breakpoint
@@ -61,7 +61,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "work_versions_work_id_version_unique" ON "wor
 CREATE UNIQUE INDEX IF NOT EXISTS "work_versions_work_id_tool_call_id_unique" ON "work_versions" USING btree ("work_id","tool_call_id") WHERE "work_versions"."tool_call_id" is not null;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_thread_id_idx" ON "work_versions" USING btree ("thread_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_message_id_idx" ON "work_versions" USING btree ("message_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "work_versions_actor_agent_id_idx" ON "work_versions" USING btree ("actor_agent_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "work_versions_agent_id_idx" ON "work_versions" USING btree ("agent_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_root_operation_created_at_idx" ON "work_versions" USING btree ("root_operation_id","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_topic_created_at_idx" ON "work_versions" USING btree ("topic_id","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_topic_thread_created_at_idx" ON "work_versions" USING btree ("topic_id","thread_id","created_at");--> statement-breakpoint

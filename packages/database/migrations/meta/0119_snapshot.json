@@ -6,7 +6,7 @@
   },
   "dialect": "postgresql",
   "enums": {},
-  "id": "c9e9eba7-1382-462e-8131-0524cb5b8388",
+  "id": "b8674a18-9723-4a38-aeac-9a3e1d9c99f8",
   "policies": {},
   "prevId": "8f880aef-6d25-4875-aaa9-d01d12e5d5c2",
   "roles": {},
@@ -22046,8 +22046,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "actor_agent_id": {
-          "name": "actor_agent_id",
+        "agent_id": {
+          "name": "agent_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -22152,11 +22152,11 @@
           "method": "btree",
           "with": {}
         },
-        "work_versions_actor_agent_id_idx": {
-          "name": "work_versions_actor_agent_id_idx",
+        "work_versions_agent_id_idx": {
+          "name": "work_versions_agent_id_idx",
           "columns": [
             {
-              "expression": "actor_agent_id",
+              "expression": "agent_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -22274,11 +22274,11 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "work_versions_actor_agent_id_agents_id_fk": {
-          "name": "work_versions_actor_agent_id_agents_id_fk",
+        "work_versions_agent_id_agents_id_fk": {
+          "name": "work_versions_agent_id_agents_id_fk",
           "tableFrom": "work_versions",
           "tableTo": "agents",
-          "columnsFrom": ["actor_agent_id"],
+          "columnsFrom": ["agent_id"],
           "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
