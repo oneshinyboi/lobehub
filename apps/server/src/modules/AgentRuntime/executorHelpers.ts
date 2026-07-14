@@ -87,7 +87,7 @@ export const archiveRuntimeToolResult = async (
  * sidebar refresh gap is tracked as a follow-up.
  */
 export const registerWorkFromIntent = async ({
-  actorAgentId,
+  agentId,
   intent,
   rootOperationId,
   serverDB,
@@ -101,7 +101,7 @@ export const registerWorkFromIntent = async ({
   userId,
   workspaceId,
 }: {
-  actorAgentId?: string | null;
+  agentId?: string | null;
   intent: WorkRegistrationIntent;
   rootOperationId?: string;
   serverDB: LobeChatDatabase;
@@ -134,7 +134,7 @@ export const registerWorkFromIntent = async ({
         registerTask: (params) => workModel.registerTask(params),
       },
       {
-        actorAgentId,
+        agentId,
         ...cumulative,
         messageId: sourceMessageId,
         rootOperationId,
