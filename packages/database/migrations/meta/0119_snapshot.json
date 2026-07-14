@@ -22014,7 +22014,7 @@
           "name": "tool_identifier",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "topic_id": {
           "name": "topic_id",
@@ -22364,7 +22364,7 @@
           "name": "tool_identifier",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "root_operation_id": {
           "name": "root_operation_id",
