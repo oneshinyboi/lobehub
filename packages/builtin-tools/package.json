@@ -51,14 +51,14 @@
     "@lobechat/builtin-tool-web-browsing": "workspace:*",
     "@lobechat/builtin-tool-web-onboarding": "workspace:*",
     "@lobechat/const": "workspace:*",
-    "@lobehub/icons": "^5.11.0"
+    "@lobehub/icons": "^5.13.0"
   },
   "devDependencies": {
     "@lobechat/types": "workspace:*",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@lobehub/ui": "^5",
+    "@lobehub/ui": "^5.20.3",
     "antd-style": "*",
     "lucide-react": "*",
     "react": "*",

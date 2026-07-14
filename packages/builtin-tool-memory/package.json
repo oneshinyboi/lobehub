@@ -20,7 +20,7 @@
     "@types/json-schema": "^7.0.15"
   },
   "peerDependencies": {
-    "@lobehub/ui": "^5",
+    "@lobehub/ui": "^5.20.3",
     "antd-style": "*",
     "lucide-react": "*",
     "react": "*",
