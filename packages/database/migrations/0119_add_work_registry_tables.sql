@@ -1,11 +1,3 @@
--- The Work registry has never shipped: this migration was regenerated in place
--- during PR review (snapshot jsonb dropped, display columns added, uuid version
--- ids), so preview/dev DBs that applied the earlier revision hold the OLD shape
--- under the same table names. Converge them by dropping the branch-local tables
--- first (they carry no production data); on a first-time run both drops are
--- no-ops. The IF [NOT] EXISTS guards keep the file rerunnable end to end.
-DROP TABLE IF EXISTS "work_versions" CASCADE;--> statement-breakpoint
-DROP TABLE IF EXISTS "works" CASCADE;--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "work_versions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"work_id" text NOT NULL,
@@ -77,6 +69,8 @@ CREATE INDEX IF NOT EXISTS "work_versions_topic_id_idx" ON "work_versions" USING
 CREATE INDEX IF NOT EXISTS "work_versions_thread_id_idx" ON "work_versions" USING btree ("thread_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_source_message_id_idx" ON "work_versions" USING btree ("source_message_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_root_operation_id_idx" ON "work_versions" USING btree ("root_operation_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "work_versions_root_operation_created_at_idx" ON "work_versions" USING btree ("root_operation_id","created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "work_versions_topic_thread_created_at_idx" ON "work_versions" USING btree ("topic_id","thread_id","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_user_id_idx" ON "work_versions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_workspace_id_idx" ON "work_versions" USING btree ("workspace_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_versions_created_at_idx" ON "work_versions" USING btree ("created_at");--> statement-breakpoint
@@ -84,6 +78,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "works_resource_user_unique" ON "works" USING 
 CREATE UNIQUE INDEX IF NOT EXISTS "works_resource_workspace_unique" ON "works" USING btree ("workspace_id","resource_type","resource_id") WHERE "works"."workspace_id" is not null;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_user_id_idx" ON "works" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_workspace_id_idx" ON "works" USING btree ("workspace_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "works_user_updated_at_id_idx" ON "works" USING btree ("user_id","updated_at","id") WHERE "works"."workspace_id" is null;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "works_workspace_updated_at_id_idx" ON "works" USING btree ("workspace_id","updated_at","id") WHERE "works"."workspace_id" is not null;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_resource_idx" ON "works" USING btree ("resource_type","resource_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_current_version_id_idx" ON "works" USING btree ("current_version_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "works_updated_at_idx" ON "works" USING btree ("updated_at");--> statement-breakpoint
