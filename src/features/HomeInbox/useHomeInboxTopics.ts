@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 
 import { useClientDataSWR } from '@/libs/swr';
 import { homeInboxKeys } from '@/libs/swr/keys';
-import { topicService } from '@/services/topic';
-import { type ChatTopic, type ChatTopicStatus } from '@/types/topic';
+import { type TopicListItem, topicService } from '@/services/topic';
+import { type ChatTopicStatus } from '@/types/topic';
 
 /**
  * Everything the home inbox needs from topics, in one round trip. `queryTopics`
@@ -11,8 +11,7 @@ import { type ChatTopic, type ChatTopicStatus } from '@/types/topic';
  */
 const INBOX_STATUSES: ChatTopicStatus[] = ['running', 'unread'];
 
-/** `queryTopics` returns raw topic rows, which carry `agentId` even though `ChatTopic` doesn't declare it. */
-export type InboxTopic = ChatTopic & { agentId?: string | null };
+export type InboxTopic = TopicListItem;
 
 export interface HomeInboxTopics {
   error: unknown;
@@ -33,7 +32,9 @@ export interface HomeInboxTopics {
 export const useHomeInboxTopics = (isLogin: boolean | undefined): HomeInboxTopics => {
   const { data, error, isLoading, mutate } = useClientDataSWR(
     isLogin ? homeInboxKeys.topics(isLogin) : null,
-    () => topicService.queryTopics({ statuses: INBOX_STATUSES }),
+    // `withLastMessage` is what makes an unread row readable: the card shows what
+    // the agent actually said, not just the topic title it was filed under.
+    () => topicService.queryTopics({ statuses: INBOX_STATUSES, withLastMessage: true }),
     // A live overview: refetch on focus almost immediately (default throttle is
     // 5min) so a run that just finished shows up the instant the user looks.
     { focusThrottleInterval: 1000 },
