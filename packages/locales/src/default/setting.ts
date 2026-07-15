@@ -1384,6 +1384,7 @@ When I am ___, I need ___
   'workspace.billingPage.billing.autoRenewOffOnDate': 'Ends on {{date}}',
   'workspace.billingPage.billing.autoRenewOn': 'Auto-renew on',
   'workspace.billingPage.billing.autoRenewOnDate': 'Renews on {{date}}',
+  'workspace.billingPage.billing.payOnceValidUntil': 'Valid until {{date}}',
   'workspace.billingPage.billing.banner.cancelledDesc':
     'Cancellation scheduled. Your subscription stops renewing at the end of the current billing cycle — the workspace then falls back to Free.',
   'workspace.billingPage.billing.banner.cancelledTitle': 'Subscription pending cancellation',
@@ -1508,6 +1509,8 @@ When I am ___, I need ___
   'workspace.billingPage.billing.upgradePlanModal.paymentMethodFallback': 'Current payment method',
   'workspace.billingPage.billing.upgradePlanModal.seatLimitReached':
     'Current plan supports up to {{maxSeats}} seats.',
+  'workspace.billingPage.billing.upgradePlanModal.payOnceSeatCheckout':
+    'You will be redirected to checkout to pay the prorated seat fee for the remaining period.',
   'workspace.billingPage.billing.upgradePlanModal.paymentMethodLabel': 'Payment method',
   'workspace.billingPage.billing.upgradePlanModal.proratedCharge':
     'A prorated charge will be applied immediately to your current payment method.',
@@ -1798,6 +1801,10 @@ When I am ___, I need ___
   'workspace.billingPage.plans.modelsHint': 'Estimated messages from the shared pool',
   'workspace.billingPage.plans.modelsTitle': 'Featured models',
   'workspace.billingPage.plans.perMonth': '/ month',
+  'workspace.billingPage.plans.payOnceChangeUnsupported':
+    'One-time plans cannot be switched or cancelled. You can purchase a new plan after it expires.',
+  'workspace.billingPage.plans.payOncePurchaseNotice':
+    'One-time payments do not auto-renew, and the plan cannot be changed or cancelled before it expires. You can add seats at any time. Please confirm your selection.',
   'workspace.billingPage.plans.pendingChangeCta': 'Change scheduled',
   'workspace.billingPage.plans.popularTag': 'Recommended',
   'workspace.billingPage.plans.priceProCaption': 'Platform fee · billed monthly',
@@ -2612,6 +2619,8 @@ When I am ___, I need ___
   'workspace.wizard.step2.billing.totalMonthHint': 'Platform fee today · includes 3 seats',
   'workspace.wizard.step2.chargeDisclosure':
     'Confirming creates this workspace on {{plan}} and charges ${{fee}} now, plus any applicable taxes. The subscription renews on the selected {{interval}} cycle until you cancel.',
+  'workspace.wizard.step2.chargeDisclosurePayOnce':
+    'Confirming creates this workspace on {{plan}} and charges a one-time fee of ${{fee}} for {{duration}}, plus any applicable taxes. It does not auto-renew.',
   'workspace.wizard.step2.confirmPurchase': 'Confirm purchase',
   'workspace.wizard.step2.createFailed': 'Failed to create workspace',
   'workspace.wizard.step2.details.description': "See what's included in your selected plan.",
