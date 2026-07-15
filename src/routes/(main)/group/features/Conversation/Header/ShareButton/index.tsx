@@ -23,7 +23,7 @@ const ShareButton = memo<ShareButtonProps>(({ mobile, setOpen, open }) => {
   const { openShareModal } = useShareModal({ open, setOpen });
   const { t } = useTranslation('common');
   const activeTopicId = useChatStore((s) => s.activeTopicId);
-  const enableTopicLinkShare = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
+  const enableTopicLinkShare = true;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
 
   // Hide share button when no topic exists (no messages sent yet)
