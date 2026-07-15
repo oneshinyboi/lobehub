@@ -9,16 +9,19 @@ import { ChunkModel } from '@/database/models/chunk';
 import { DocumentModel } from '@/database/models/document';
 import { FileModel } from '@/database/models/file';
 import { MessageModel } from '@/database/models/message';
+import { ResourcePermissionModel } from '@/database/models/resourcePermission';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { DocumentService } from '@/server/services/document';
+import {
+  assertCanEditResource,
+  assertCanPerformResourceAction,
+  buildResourcePermissionState,
+} from '@/server/services/resourcePermission';
 import { hasWorkspaceScopedPermission } from '@/server/services/workspacePermission';
 import { TransferErrorCode } from '@/types/transferError';
 
-import {
-  assertWorkspaceRowManageable,
-  isWorkspaceNonOwner,
-} from './_helpers/assertWorkspaceRowManageable';
+import { isWorkspaceNonOwner } from './_helpers/assertWorkspaceRowManageable';
 import {
   compareDocumentHistoryItemsInputSchema,
   getDocumentHistoryItemInputSchema,
@@ -62,8 +65,7 @@ export const documentRouter = router({
         slug: z.string().optional(),
         title: z.string(),
         // Workspace-only knob; ignored in personal mode by the model layer.
-        // When omitted: top-level docs default to 'private' (sidebar's primary
-        // entry point), nested docs inherit the parent's visibility.
+        // When omitted, user-authored workspace docs default to private.
         visibility: z.enum(['private', 'public']).optional(),
       }),
     )
@@ -79,11 +81,20 @@ export const documentRouter = router({
 
       // Parse editorData from JSON string to object
       const editorData = input.editorData ? JSON.parse(input.editorData) : undefined;
-      return ctx.documentService.createDocument({
+      const document = await ctx.documentService.createDocument({
         ...input,
         editorData,
         parentId: resolvedParentId,
       });
+      if (ctx.workspaceId && document.visibility !== 'private') {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).setAccessLevel(
+          'document',
+          document.id,
+          'edit',
+          ctx.userId,
+        );
+      }
+      return document;
     }),
 
   createDocuments: documentProcedure
@@ -129,36 +140,74 @@ export const documentRouter = router({
         }),
       );
 
-      return ctx.documentService.createDocuments(processedDocuments);
+      const createdDocuments = await ctx.documentService.createDocuments(processedDocuments);
+      if (ctx.workspaceId) {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all(
+          createdDocuments
+            .filter((document) => document.visibility !== 'private')
+            .map((document) =>
+              permissionModel.setAccessLevel('document', document.id, 'edit', ctx.userId),
+            ),
+        );
+      }
+      return createdDocuments;
     }),
 
   deleteDocument: documentProcedure
     .use(withScopedPermission('document:delete'))
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const existing = await ctx.documentModel.findById(input.id);
-      if (!existing) return;
-      assertWorkspaceRowManageable(ctx, existing.userId, 'document');
-
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'delete',
+          db: ctx.serverDB,
+          resourceId: input.id,
+          resourceType: 'document',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
       // Non-owner members may delete their own folder, but the recursive
       // cascade must not take other members' descendants with it.
-      return ctx.documentService.deleteDocument(input.id, {
+      const result = await ctx.documentService.deleteDocument(input.id, {
         restrictToCreator: isWorkspaceNonOwner(ctx),
       });
+      if (ctx.workspaceId) {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).removeAll(
+          'document',
+          input.id,
+        );
+      }
+      return result;
     }),
 
   deleteDocuments: documentProcedure
     .use(withScopedPermission('document:delete'))
     .input(z.object({ ids: z.array(z.string()) }))
     .mutation(async ({ ctx, input }) => {
-      const targets = await ctx.documentModel.findByIds(input.ids);
-      for (const target of targets) {
-        assertWorkspaceRowManageable(ctx, target.userId, 'document');
+      if (ctx.workspaceId) {
+        await Promise.all(
+          input.ids.map((id) =>
+            assertCanPerformResourceAction({
+              action: 'delete',
+              db: ctx.serverDB,
+              resourceId: id,
+              resourceType: 'document',
+              userId: ctx.userId,
+              workspaceId: ctx.workspaceId!,
+            }),
+          ),
+        );
       }
-
-      return ctx.documentService.deleteDocuments(input.ids, {
+      const result = await ctx.documentService.deleteDocuments(input.ids, {
         restrictToCreator: isWorkspaceNonOwner(ctx),
       });
+      if (ctx.workspaceId) {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all(input.ids.map((id) => permissionModel.removeAll('document', id)));
+      }
+      return result;
     }),
 
   getDocumentById: documentProcedure
@@ -201,6 +250,16 @@ export const documentRouter = router({
     .use(withScopedPermission('document:update'))
     .input(saveDocumentHistoryInputSchema)
     .mutation(async ({ ctx, input }) => {
+      // Same write guard as `updateDocument` — history saves rewrite the
+      // document's editorData, so a view-level member must not reach it.
+      await assertCanEditResource({
+        db: ctx.serverDB,
+        resourceId: input.documentId,
+        resourceType: 'document',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId ?? undefined,
+      });
+
       const editorData = JSON.parse(input.editorData);
       return ctx.documentService.saveDocumentHistory(
         input.documentId,
@@ -281,6 +340,16 @@ export const documentRouter = router({
     .use(withScopedPermission('document:update'))
     .input(z.object({ id: z.string(), ownerId: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
+      // The lock grants exclusive write access — a view-level member must not
+      // be able to seize it and starve legitimate editors.
+      await assertCanEditResource({
+        db: ctx.serverDB,
+        resourceId: input.id,
+        resourceType: 'document',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId ?? undefined,
+      });
+
       return input.ownerId
         ? ctx.documentService.acquireDocumentLockWithOwner(input.id, input.ownerId)
         : ctx.documentService.acquireDocumentLock(input.id);
@@ -306,6 +375,16 @@ export const documentRouter = router({
     .use(withScopedPermission('document:update'))
     .input(updateDocumentInputSchema)
     .mutation(async ({ ctx, input }) => {
+      // General-access write guard: a public document whose workspace level
+      // is `viewer` is read-only for everyone but the creator / owner.
+      await assertCanEditResource({
+        db: ctx.serverDB,
+        resourceId: input.id,
+        resourceType: 'document',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId ?? undefined,
+      });
+
       const { id, editorData: editorDataString, ...params } = input;
       // Parse editorData from JSON string to object if present
       const editorData = editorDataString ? JSON.parse(editorDataString) : undefined;
@@ -322,6 +401,7 @@ export const documentRouter = router({
     .input(
       z.object({
         documentId: z.string(),
+        targetAccessLevel: z.enum(['view', 'edit']).optional(),
         targetVisibility: z.enum(['private', 'public']).optional(),
         targetWorkspaceId: z.string().nullable(),
       }),
@@ -335,22 +415,15 @@ export const documentRouter = router({
           message: 'Document not found',
         });
 
-      // Workspace mode: only owners can transfer items created by others
-      if (ctx.workspaceId && doc.userId !== ctx.userId) {
-        const canOverride = await hasWorkspaceScopedPermission({
-          action: 'DOCUMENT_UPDATE',
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'transfer',
           db: ctx.serverDB,
-          scopes: ['ALL'],
+          resourceId: input.documentId,
+          resourceType: 'document',
           userId: ctx.userId,
           workspaceId: ctx.workspaceId,
         });
-        if (!canOverride) {
-          throw new TRPCError({
-            cause: { data: { code: TransferErrorCode.OwnerOnly } },
-            code: 'FORBIDDEN',
-            message: 'Only workspace owners can transfer items created by others',
-          });
-        }
       }
 
       if (input.targetWorkspaceId === (ctx.workspaceId ?? null)) {
@@ -384,16 +457,39 @@ export const documentRouter = router({
         targetWorkspaceId: input.targetWorkspaceId,
       });
 
-      return ctx.documentModel.transferTo(
+      const result = await ctx.documentModel.transferTo(
         input.documentId,
         input.targetWorkspaceId,
         ctx.userId,
         input.targetVisibility,
       );
+      if (ctx.workspaceId) {
+        const sourcePermissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all(
+          result.documentIds.map((id) => sourcePermissionModel.removeAll('document', id)),
+        );
+      }
+      if (input.targetWorkspaceId && input.targetVisibility === 'public') {
+        const targetPermissionModel = new ResourcePermissionModel(
+          ctx.serverDB,
+          input.targetWorkspaceId,
+        );
+        await Promise.all(
+          result.documentIds.map((id) =>
+            targetPermissionModel.setAccessLevel(
+              'document',
+              id,
+              input.targetAccessLevel ?? 'edit',
+              ctx.userId,
+            ),
+          ),
+        );
+      }
+      return result;
     }),
 
   /**
-   * Publish a private document subtree into the workspace. Thin wrapper
+   * Publish one private document into the workspace. Thin wrapper
    * around `setDocumentVisibility({ id, visibility: 'public' })`; kept for
    * backwards compatibility with existing callers.
    */
@@ -401,20 +497,51 @@ export const documentRouter = router({
     .use(withScopedPermission('document:update'))
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      return ctx.documentService.publishToWorkspace(input.id);
+      // Same guard as the sibling `setDocumentVisibility` — publishing is a
+      // visibility change and stays creator-only.
+      if (ctx.workspaceId) {
+        const doc = await ctx.documentModel.findById(input.id);
+        if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+        await assertCanPerformResourceAction({
+          action: 'changeVisibility',
+          db: ctx.serverDB,
+          grantedPermissions: (ctx as { workspacePermissionCodes?: string[] })
+            .workspacePermissionCodes,
+          meta: {
+            userId: doc.userId,
+            visibility: doc.visibility,
+            workspaceId: doc.workspaceId,
+          },
+          resourceId: input.id,
+          resourceType: 'document',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
+
+      const result = await ctx.documentService.publishToWorkspace(input.id);
+      if (ctx.workspaceId) {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).setAccessLevel(
+          'document',
+          input.id,
+          'edit',
+          ctx.userId,
+        );
+      }
+      return result;
     }),
 
   /**
-   * Toggle a document subtree's workspace visibility. Cascades over the whole
-   * subtree so a folder Page and every nested child flip together (P1 tree
-   * consistency). Creator-only. Personal mode has no workspace visibility
-   * concept, so the call is rejected there.
+   * Toggle one document's workspace visibility. Documents do not inherit from
+   * their parent, so children are deliberately left unchanged.
    */
   setDocumentVisibility: documentProcedure
     .use(withScopedPermission('document:update'))
     .input(
       z.object({
         id: z.string(),
+        accessLevel: z.enum(['view', 'edit']).optional(),
         visibility: z.enum(['private', 'public']),
       }),
     )
@@ -429,14 +556,64 @@ export const documentRouter = router({
       const doc = await ctx.documentModel.findById(input.id);
       if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
 
-      if (doc.userId !== ctx.userId) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Only the creator can change a document’s visibility',
-        });
+      await assertCanPerformResourceAction({
+        action: 'changeVisibility',
+        db: ctx.serverDB,
+        grantedPermissions: (ctx as { workspacePermissionCodes?: string[] })
+          .workspacePermissionCodes,
+        meta: {
+          userId: doc.userId,
+          visibility: doc.visibility,
+          workspaceId: doc.workspaceId,
+        },
+        resourceId: input.id,
+        resourceType: 'document',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId,
+      });
+
+      const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+      if (doc.visibility === input.visibility) {
+        const accessLevel =
+          input.visibility === 'public'
+            ? (input.accessLevel ??
+              (await permissionModel.getEffectiveAccessLevel('document', input.id)))
+            : 'edit';
+        if (input.visibility === 'public' && input.accessLevel) {
+          await permissionModel.setAccessLevel('document', input.id, input.accessLevel, ctx.userId);
+        }
+        return {
+          ...buildResourcePermissionState({
+            accessLevel,
+            canManage: true,
+            creatorId: doc.userId,
+            visibility: input.visibility,
+          }),
+          documentIds: [input.id],
+        };
       }
 
-      return ctx.documentService.setVisibility(input.id, input.visibility);
+      const result = await ctx.documentService.setVisibility(input.id, input.visibility);
+      const accessLevel = input.visibility === 'private' ? 'edit' : (input.accessLevel ?? 'edit');
+      if (input.visibility === 'private') {
+        await permissionModel.removeAll('document', input.id);
+      } else {
+        await permissionModel.setAccessLevel(
+          'document',
+          input.id,
+          input.accessLevel ?? 'edit',
+          ctx.userId,
+        );
+      }
+      return {
+        ...buildResourcePermissionState({
+          accessLevel,
+          canManage: true,
+          creatorId: doc.userId,
+          visibility: input.visibility,
+        }),
+        ...result,
+      };
     }),
 
   copyDocumentToWorkspace: documentProcedure

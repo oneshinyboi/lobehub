@@ -6,14 +6,45 @@ import { ChatGroupModel } from '@/database/models/chatGroup';
 import { SessionModel } from '@/database/models/session';
 import { SessionGroupModel } from '@/database/models/sessionGroup';
 import { insertAgentSchema, insertSessionSchema } from '@/database/schemas';
+import type { LobeChatDatabase } from '@/database/type';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { assertCanEditResource } from '@/server/services/resourcePermission';
 import { AgentChatConfigSchema } from '@/types/agent';
 import { LobeMetaDataSchema } from '@/types/meta';
 import { type BatchTaskResult } from '@/types/service';
 import { type ChatSessionList, type LobeGroupSession } from '@/types/session';
 
 import { assertWorkspaceRowManageable } from './_helpers/assertWorkspaceRowManageable';
+
+/**
+ * Session config updates write through to the linked agent's config, so a
+ * workspace member with view/use access must not use them as an edit
+ * escalation. Resolves the session's linked agent and runs the edit guard.
+ * No-op in personal mode (no workspaceId).
+ */
+const assertCanEditSessionAgent = async (
+  ctx: {
+    serverDB: LobeChatDatabase;
+    sessionModel: SessionModel;
+    userId: string;
+    workspaceId?: string | null;
+  },
+  sessionId: string,
+) => {
+  if (!ctx.workspaceId) return;
+
+  const session = await ctx.sessionModel.findByIdOrSlug(sessionId);
+  if (!session?.agent?.id) return;
+
+  await assertCanEditResource({
+    db: ctx.serverDB,
+    resourceId: session.agent.id,
+    resourceType: 'agent',
+    userId: ctx.userId,
+    workspaceId: ctx.workspaceId,
+  });
+};
 
 const sessionProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
@@ -194,8 +225,7 @@ export const sessionRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const session = await ctx.sessionModel.findByIdOrSlug(input.id);
-      if (session) assertWorkspaceRowManageable(ctx, session.userId, 'session');
+      await assertCanEditSessionAgent(ctx, input.id);
 
       return ctx.sessionModel.updateConfig(input.id, {
         chatConfig: input.value,
@@ -210,8 +240,7 @@ export const sessionRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const session = await ctx.sessionModel.findByIdOrSlug(input.id);
-      if (session) assertWorkspaceRowManageable(ctx, session.userId, 'session');
+      await assertCanEditSessionAgent(ctx, input.id);
 
       return ctx.sessionModel.updateConfig(input.id, input.value);
     }),

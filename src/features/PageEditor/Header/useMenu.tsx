@@ -21,8 +21,10 @@ import { useTranslation } from 'react-i18next';
 import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
 import { useAuthorInfo } from '@/business/client/hooks/useAuthorInfo';
 import { useDocumentTransferMenuItem } from '@/business/client/hooks/useDocumentTransferMenuItem';
+import { useResourcePermissionMenuItem } from '@/features/ResourcePermission/useResourcePermissionMenuItem';
 import VisibilityConfirmContent from '@/features/VisibilityConfirmContent';
 import { usePermission } from '@/hooks/usePermission';
+import { resourcePermissionService } from '@/services/resourcePermission';
 import { useDocumentStore } from '@/store/document';
 import { editorSelectors } from '@/store/document/slices/editor';
 import { useFileStore } from '@/store/file';
@@ -77,6 +79,10 @@ export const useMenu = (): { menuItems: any[] } => {
   const canMakePrivate = Boolean(
     activeWorkspaceId && isOwnPage && pageDocument?.visibility === 'public' && canEditPage,
   );
+  const memberPermissionMenuItem = useResourcePermissionMenuItem(
+    'document',
+    activeWorkspaceId && pageDocument?.visibility === 'public' ? documentId : undefined,
+  ) as DropdownItem | null;
 
   const [togglePageAgentPanel, wideScreen, toggleWideScreen] = useGlobalStore((s) => [
     s.togglePageAgentPanel,
@@ -101,13 +107,25 @@ export const useMenu = (): { menuItems: any[] } => {
 
   const handlePublish = useCallback(() => {
     if (!canPublish || !documentId) return;
+    const accessLevelRef: { current: 'edit' | 'use' | 'view' } = { current: 'edit' };
     confirmModal({
       cancelText: t('cancel', { ns: 'common' }),
-      content: <VisibilityConfirmContent variant="publish" />,
+      content: (
+        <VisibilityConfirmContent
+          accessLevelRef={accessLevelRef}
+          resourceType="document"
+          variant="publish"
+        />
+      ),
       okText: t('continue', { ns: 'common' }),
       onOk: async () => {
         try {
           await publishPageToWorkspace(documentId);
+          await resourcePermissionService.setAccessLevel(
+            'document',
+            documentId,
+            accessLevelRef.current,
+          );
           message.success(t('pageList.publishSuccess'));
         } catch (error) {
           console.error('Failed to publish page:', error);
@@ -189,6 +207,22 @@ export const useMenu = (): { menuItems: any[] } => {
             },
           ]
         : []),
+      ...(memberPermissionMenuItem || canMakePrivate
+        ? [
+            ...(memberPermissionMenuItem ? [memberPermissionMenuItem] : []),
+            ...(canMakePrivate
+              ? [
+                  {
+                    icon: <Icon icon={EyeOffIcon} />,
+                    key: 'make-private',
+                    label: t('makePrivate', { ns: 'common' }),
+                    onClick: handleMakePrivate,
+                  } as DropdownItem,
+                ]
+              : []),
+            { type: 'divider' as const },
+          ]
+        : []),
       {
         disabled: !canCreatePage,
         icon: <Icon icon={CopyPlus} />,
@@ -237,16 +271,6 @@ export const useMenu = (): { menuItems: any[] } => {
               key: 'publish-to-workspace',
               label: t('pageList.publishToWorkspace'),
               onClick: handlePublish,
-            } as DropdownItem,
-          ]
-        : []),
-      ...(canMakePrivate
-        ? [
-            {
-              icon: <Icon icon={EyeOffIcon} />,
-              key: 'make-private',
-              label: t('makePrivate', { ns: 'common' }),
-              onClick: handleMakePrivate,
             } as DropdownItem,
           ]
         : []),
@@ -311,6 +335,7 @@ export const useMenu = (): { menuItems: any[] } => {
     handlePublish,
     handleMakePrivate,
     handleExportMarkdown,
+    memberPermissionMenuItem,
     transferMenuItems,
   ]);
 

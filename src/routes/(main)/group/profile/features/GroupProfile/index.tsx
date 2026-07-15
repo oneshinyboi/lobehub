@@ -11,8 +11,11 @@ import { useParams } from 'react-router';
 import urlJoin from 'url-join';
 
 import { useAgentGroupTransferMenuItem } from '@/business/client/hooks/useAgentGroupTransferMenuItem';
+import { useHasActiveWorkspace } from '@/business/client/hooks/useHasActiveWorkspace';
 import { EditingIndicator, type EditLockClient, useEditLock } from '@/features/EditLock';
 import { EditorCanvas } from '@/features/EditorCanvas';
+import PermissionsPopover from '@/features/ResourcePermission/PermissionsPopover';
+import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
 import { usePermission } from '@/hooks/usePermission';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { lambdaClient } from '@/libs/trpc/client';
@@ -38,14 +41,22 @@ const groupLockClient: EditLockClient = {
 
 const GroupProfile = memo(() => {
   const { t } = useTranslation(['setting', 'chat']);
-  const { allowed: canEdit } = usePermission('edit_own_content');
+  const { allowed: hasEditPermission } = usePermission('edit_own_content');
   const theme = useTheme();
   const { gid } = useParams<{ gid: string }>();
   const groupId = useAgentGroupStore(agentGroupSelectors.activeGroupId);
+  const hasActiveWorkspace = useHasActiveWorkspace();
   const currentGroup = useAgentGroupStore((s) => agentGroupSelectors.getGroupById(gid ?? '')(s));
   const updateGroup = useAgentGroupStore((s) => s.updateGroup);
   const router = useQueryRoute();
   const transferMenuItems = useAgentGroupTransferMenuItem(groupId ?? undefined);
+  // A workspace member whose General access on this group is view/use level
+  // can't edit it (defaults permissive while loading — server enforces).
+  const { canEditResource } = useResourceAccess(
+    'agentGroup',
+    currentGroup?.visibility === 'private' ? undefined : (groupId ?? undefined),
+  );
+  const canEdit = hasEditPermission && canEditResource;
 
   const settingsModalRef = useRef<ModalInstance | null>(null);
   useEffect(
@@ -166,6 +177,9 @@ const GroupProfile = memo(() => {
                 style={{ color: theme.colorTextSecondary }}
               />
             </DropdownMenu>
+          )}
+          {hasActiveWorkspace && groupId && currentGroup?.visibility !== 'private' && (
+            <PermissionsPopover resourceId={groupId} resourceType={'agentGroup'} />
           )}
           <Button
             disabled={!canEdit}

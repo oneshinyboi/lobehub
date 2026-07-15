@@ -302,9 +302,11 @@ class AgentService {
     agentId: string,
     targetWorkspaceId: string | null,
     targetVisibility?: 'private' | 'public',
+    targetAccessLevel?: 'edit' | 'use' | 'view',
   ): Promise<{ agentId: string; slug: string | null }> => {
     return lambdaClient.agent.transferAgent.mutate({
       agentId,
+      targetAccessLevel,
       targetVisibility,
       targetWorkspaceId,
     });

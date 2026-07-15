@@ -212,6 +212,7 @@
   "copy": "复制",
   "copyFail": "复制失败",
   "copySuccess": "已复制",
+  "createdAt": "创建于 {{time}}",
   "dataStatistics.messages": "消息",
   "dataStatistics.sessions": "助理",
   "dataStatistics.today": "今日新增",

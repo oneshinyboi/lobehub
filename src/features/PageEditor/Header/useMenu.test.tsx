@@ -74,6 +74,10 @@ vi.mock('@/features/VisibilityConfirmContent', () => ({
   default: () => null,
 }));
 
+vi.mock('@/features/ResourcePermission/useResourcePermissionMenuItem', () => ({
+  useResourcePermissionMenuItem: () => null,
+}));
+
 vi.mock('@/hooks/usePermission', () => ({
   usePermission: (action: 'create_content' | 'edit_own_content') => ({
     allowed: permissionMock[action],

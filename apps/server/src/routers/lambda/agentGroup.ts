@@ -6,6 +6,7 @@ import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPer
 import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { AgentModel } from '@/database/models/agent';
 import { ChatGroupModel } from '@/database/models/chatGroup';
+import { ResourcePermissionModel } from '@/database/models/resourcePermission';
 import { UserModel } from '@/database/models/user';
 import { AgentGroupRepository } from '@/database/repositories/agentGroup';
 import { type ChatGroupConfig } from '@/database/types/chatGroup';
@@ -14,13 +15,15 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentGroupService } from '@/server/services/agentGroup';
 import { EditLockService } from '@/server/services/editLock';
 import { publishResourceEvent } from '@/server/services/resourceEvents';
+import {
+  assertCanEditResource,
+  assertCanPerformResourceAction,
+  buildResourcePermissionState,
+} from '@/server/services/resourcePermission';
 import { hasWorkspaceScopedPermission } from '@/server/services/workspacePermission';
 import { TransferErrorCode } from '@/types/transferError';
 
-import {
-  assertWorkspaceRowManageable,
-  isWorkspaceNonOwner,
-} from './_helpers/assertWorkspaceRowManageable';
+import { isWorkspaceNonOwner } from './_helpers/assertWorkspaceRowManageable';
 
 /**
  * Custom schema for agent member input, replacing drizzle-generated insertAgentSchema
@@ -80,6 +83,16 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'edit',
+          db: ctx.serverDB,
+          resourceId: input.groupId,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
       return ctx.chatGroupModel.addAgentsToGroup(input.groupId, input.agentIds);
     }),
 
@@ -95,6 +108,16 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'edit',
+          db: ctx.serverDB,
+          resourceId: input.groupId,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
       // Batch create virtual agents
       const agentConfigs = input.agents.map((agent) => ({
         ...agent,
@@ -111,6 +134,15 @@ export const agentGroupRouter = router({
 
       // Add all agents to the group
       await ctx.chatGroupModel.addAgentsToGroup(input.groupId, agentIds);
+
+      if (ctx.workspaceId) {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all(
+          createdAgents
+            .filter((agent) => agent.visibility !== 'private')
+            .map((agent) => permissionModel.setAccessLevel('agent', agent.id, 'edit', ctx.userId)),
+        );
+      }
 
       return { agentIds, agents: createdAgents };
     }),
@@ -142,6 +174,14 @@ export const agentGroupRouter = router({
         ...input,
         config: ctx.agentGroupService.normalizeGroupConfig(input.config as ChatGroupConfig | null),
       });
+
+      if (ctx.workspaceId && group.visibility !== 'private') {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all([
+          permissionModel.setAccessLevel('agentGroup', group.id, 'edit', ctx.userId),
+          permissionModel.setAccessLevel('agent', supervisorAgentId, 'edit', ctx.userId),
+        ]);
+      }
 
       return { group, supervisorAgentId };
     }),
@@ -210,26 +250,53 @@ export const agentGroupRouter = router({
         supervisorConfig as any,
       );
 
+      if (ctx.workspaceId && group.visibility !== 'private') {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all([
+          permissionModel.setAccessLevel('agentGroup', group.id, 'edit', ctx.userId),
+          permissionModel.setAccessLevel('agent', supervisorAgentId, 'edit', ctx.userId),
+          ...createdAgents
+            .filter((agent) => agent.visibility !== 'private')
+            .map((agent) => permissionModel.setAccessLevel('agent', agent.id, 'edit', ctx.userId)),
+        ]);
+      }
+
       return { agentIds: memberAgentIds, groupId: group.id, supervisorAgentId };
     }),
 
   deleteGroup: agentGroupProcedureWrite
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const group = await ctx.chatGroupModel.findById(input.id);
-      if (!group) throw new TRPCError({ code: 'NOT_FOUND', message: 'Agent group not found' });
-      assertWorkspaceRowManageable(ctx, group.userId, 'group');
-      // Same rule as transfer: deleting the group cascades topics/threads/
-      // messages via FK, so a non-owner member must not erase teammates'
-      // conversations along with their own group.
-      if (isWorkspaceNonOwner(ctx) && (await ctx.agentGroupRepo.transferHasForeignRows(input.id))) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: "Only workspace owners can delete a group carrying others' conversations",
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'delete',
+          db: ctx.serverDB,
+          resourceId: input.id,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
         });
+        // Same rule as transfer: deleting the group cascades topics/threads/
+        // messages via FK, so a non-owner member must not erase teammates'
+        // conversations along with their own group.
+        if (
+          isWorkspaceNonOwner(ctx) &&
+          (await ctx.agentGroupRepo.transferHasForeignRows(input.id))
+        ) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: "Only workspace owners can delete a group carrying others' conversations",
+          });
+        }
       }
-
-      return ctx.agentGroupService.deleteGroup(input.id);
+      const result = await ctx.agentGroupService.deleteGroup(input.id);
+      if (ctx.workspaceId) {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).removeAll(
+          'agentGroup',
+          input.id,
+        );
+      }
+      return result;
     }),
 
   /**
@@ -245,7 +312,15 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return ctx.agentGroupRepo.duplicate(input.groupId, input.newTitle);
+      const result = await ctx.agentGroupRepo.duplicate(input.groupId, input.newTitle);
+      if (ctx.workspaceId && result) {
+        const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+        await Promise.all([
+          permissionModel.setAccessLevel('agentGroup', result.groupId, 'edit', ctx.userId),
+          permissionModel.setAccessLevel('agent', result.supervisorAgentId, 'edit', ctx.userId),
+        ]);
+      }
+      return result;
     }),
 
   getGroup: agentGroupProcedure
@@ -320,11 +395,16 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      // Strips members and hard-deletes virtual agents — creator/owner only.
-      const group = await ctx.chatGroupModel.findById(input.groupId);
-      if (!group) throw new TRPCError({ code: 'NOT_FOUND', message: 'Agent group not found' });
-      assertWorkspaceRowManageable(ctx, group.userId, 'group');
-
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'edit',
+          db: ctx.serverDB,
+          resourceId: input.groupId,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
       return ctx.agentGroupRepo.removeAgentsFromGroup(
         input.groupId,
         input.agentIds,
@@ -336,6 +416,9 @@ export const agentGroupRouter = router({
     .input(
       z.object({
         groupId: z.string(),
+        targetAccessLevel: z.enum(['view', 'use', 'edit']).optional(),
+        /** @deprecated Compatibility for released clients. */
+        targetGeneralAccess: z.enum(['editor', 'viewer']).optional(),
         targetVisibility: z.enum(['private', 'public']).optional(),
         targetWorkspaceId: z.string().nullable(),
       }),
@@ -350,22 +433,15 @@ export const agentGroupRouter = router({
         });
       }
 
-      if (ctx.workspaceId && group.userId !== ctx.userId) {
-        const canOverride = await hasWorkspaceScopedPermission({
-          action: 'AGENT_UPDATE',
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'transfer',
           db: ctx.serverDB,
-          scopes: ['ALL'],
+          resourceId: input.groupId,
+          resourceType: 'agentGroup',
           userId: ctx.userId,
           workspaceId: ctx.workspaceId,
         });
-
-        if (!canOverride) {
-          throw new TRPCError({
-            cause: { data: { code: TransferErrorCode.OwnerOnly } },
-            code: 'FORBIDDEN',
-            message: 'Only workspace owners can transfer agent groups created by others',
-          });
-        }
       }
 
       if (input.targetWorkspaceId) {
@@ -406,12 +482,31 @@ export const agentGroupRouter = router({
         });
       }
 
-      return ctx.agentGroupRepo.transferToWorkspace(
+      const result = await ctx.agentGroupRepo.transferToWorkspace(
         input.groupId,
         input.targetWorkspaceId,
         ctx.userId,
         input.targetVisibility,
       );
+
+      if (ctx.workspaceId) {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).removeAll(
+          'agentGroup',
+          input.groupId,
+        );
+      }
+      if (input.targetWorkspaceId && input.targetVisibility === 'public') {
+        const targetAccessLevel =
+          input.targetAccessLevel ?? (input.targetGeneralAccess === 'viewer' ? 'use' : 'edit');
+        await new ResourcePermissionModel(ctx.serverDB, input.targetWorkspaceId).setAccessLevel(
+          'agentGroup',
+          input.groupId,
+          targetAccessLevel,
+          ctx.userId,
+        );
+      }
+
+      return result;
     }),
 
   updateAgentInGroup: agentGroupProcedureWrite
@@ -427,6 +522,16 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      if (ctx.workspaceId) {
+        await assertCanPerformResourceAction({
+          action: 'edit',
+          db: ctx.serverDB,
+          resourceId: input.groupId,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+      }
       return ctx.chatGroupModel.updateAgentInGroup(input.groupId, input.agentId, input.updates);
     }),
 
@@ -438,7 +543,122 @@ export const agentGroupRouter = router({
   publishGroupToWorkspace: agentGroupProcedureWrite
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.chatGroupModel.publishToWorkspace(input.id);
+      const result = await ctx.chatGroupModel.publishToWorkspace(input.id);
+      if (ctx.workspaceId) {
+        await new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId).setAccessLevel(
+          'agentGroup',
+          input.id,
+          'edit',
+          ctx.userId,
+        );
+      }
+      return result;
+    }),
+
+  /**
+   * Bidirectional visibility switch for the Permission panel, mirroring
+   * `agent.setAgentVisibility`:
+   * - demoting to private stays creator-only (an owner-initiated demotion
+   *   would appropriate the creator's group);
+   * - publishing may also be done by a workspace owner (`AGENT_UPDATE:all`)
+   *   or a granted `manager` collaborator.
+   */
+  setGroupVisibility: agentGroupProcedureWrite
+    .input(
+      z.object({
+        accessLevel: z.enum(['view', 'use', 'edit']).optional(),
+        id: z.string(),
+        visibility: z.enum(['private', 'public']),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.workspaceId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Group visibility only applies inside a workspace',
+        });
+      }
+
+      const group = await ctx.chatGroupModel.findById(input.id);
+      if (!group) throw new TRPCError({ code: 'NOT_FOUND', message: 'Group not found' });
+
+      const permissionModel = new ResourcePermissionModel(ctx.serverDB, ctx.workspaceId);
+      const privateMembersPromise =
+        input.visibility === 'public' && group.visibility !== input.visibility
+          ? ctx.chatGroupModel.countPrivateGroupAgents(input.id)
+          : Promise.resolve(0);
+      const [, privateMembers] = await Promise.all([
+        assertCanPerformResourceAction({
+          action: 'changeVisibility',
+          db: ctx.serverDB,
+          grantedPermissions: (ctx as { workspacePermissionCodes?: string[] })
+            .workspacePermissionCodes,
+          meta: {
+            userId: group.userId,
+            visibility: group.visibility,
+            workspaceId: group.workspaceId,
+          },
+          resourceId: input.id,
+          resourceType: 'agentGroup',
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        }),
+        privateMembersPromise,
+      ]);
+      if (group.visibility === input.visibility) {
+        const accessLevel =
+          input.visibility === 'public'
+            ? (input.accessLevel ??
+              (await permissionModel.getEffectiveAccessLevel('agentGroup', input.id)))
+            : 'edit';
+        if (input.visibility === 'public' && input.accessLevel) {
+          await permissionModel.setAccessLevel(
+            'agentGroup',
+            input.id,
+            input.accessLevel,
+            ctx.userId,
+          );
+        }
+        return buildResourcePermissionState({
+          accessLevel,
+          canManage: true,
+          creatorId: group.userId,
+          visibility: input.visibility,
+        });
+      }
+
+      // A private group may hold the creator's private member agents; those
+      // would leak to every member on publish. Reject until the members are
+      // published or removed (mirrors the composite rule in addAgentsToGroup).
+      if (input.visibility === 'public' && privateMembers > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            'Cannot publish a group that still contains private agents. Publish or remove those agents first.',
+        });
+      }
+
+      const updated = await ctx.chatGroupModel.setVisibility(input.id, input.visibility);
+      if (!updated) throw new TRPCError({ code: 'NOT_FOUND', message: 'Group not found' });
+
+      const accessLevel = input.visibility === 'private' ? 'edit' : (input.accessLevel ?? 'edit');
+      if (input.visibility === 'private') {
+        await permissionModel.removeAll('agentGroup', input.id);
+      } else {
+        await permissionModel.setAccessLevel(
+          'agentGroup',
+          input.id,
+          input.accessLevel ?? 'edit',
+          ctx.userId,
+        );
+      }
+
+      return buildResourcePermissionState({
+        accessLevel,
+        canManage: true,
+        creatorId: group.userId,
+        visibility: input.visibility,
+      });
     }),
 
   updateGroup: agentGroupProcedureWrite
@@ -449,6 +669,15 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      // General-access write guard: only `edit` permits collaborative updates.
+      await assertCanEditResource({
+        db: ctx.serverDB,
+        resourceId: input.id,
+        resourceType: 'agentGroup',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId ?? undefined,
+      });
+
       // Collaborative edit lock: reject writes to a workspace group another
       // member is actively editing. Inert until a client acquires the lock.
       if (ctx.workspaceId) {

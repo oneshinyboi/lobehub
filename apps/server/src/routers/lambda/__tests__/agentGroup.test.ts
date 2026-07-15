@@ -14,6 +14,15 @@ import { agentGroupRouter } from '../agentGroup';
 
 vi.mock('@/server/services/resourceEvents', () => ({ publishResourceEvent: vi.fn() }));
 
+vi.mock('@/server/services/resourcePermission', () => ({
+  assertCanEditResource: vi.fn(),
+  assertCanPerformResourceAction: vi.fn(),
+  buildResourcePermissionState: vi.fn((params: any) => ({
+    ...params,
+    generalAccess: params.accessLevel === 'edit' ? 'editor' : 'viewer',
+  })),
+}));
+
 const publishResourceEventMock = vi.mocked(publishResourceEvent);
 
 describe('agentGroupRouter', () => {

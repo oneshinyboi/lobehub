@@ -28,6 +28,7 @@ import VisibilityConfirmContent from '@/features/VisibilityConfirmContent';
 import { usePermission } from '@/hooks/usePermission';
 import { useResourceManageable } from '@/hooks/useResourceManageable';
 import { agentService } from '@/services/agent';
+import { resourcePermissionService } from '@/services/resourcePermission';
 import { useGlobalStore } from '@/store/global';
 import { useHomeStore } from '@/store/home';
 import { homeAgentListSelectors } from '@/store/home/selectors';
@@ -227,15 +228,29 @@ export const useAgentDropdownMenu = ({
                 onClick: async ({ domEvent }: any) => {
                   domEvent?.stopPropagation();
                   if (!canEdit) return;
+                  // Written by the dialog's General-access select; applied
+                  // after the publish succeeds (default `editor` = no row).
+                  const accessLevelRef: { current: 'edit' | 'use' | 'view' } = { current: 'edit' };
                   confirmModal({
                     cancelText: t('cancel', { ns: 'common' }),
-                    content: <VisibilityConfirmContent variant="publish" />,
+                    content: (
+                      <VisibilityConfirmContent
+                        accessLevelRef={accessLevelRef}
+                        resourceType="agent"
+                        variant="publish"
+                      />
+                    ),
                     okText: t('agent.publishToWorkspace', {
                       defaultValue: 'Publish to Workspace',
                     }),
                     onOk: async () => {
                       try {
                         await agentService.publishAgentToWorkspace(id);
+                        await resourcePermissionService.setAccessLevel(
+                          'agent',
+                          id,
+                          accessLevelRef.current,
+                        );
                         await refreshAgentList();
                         revealSidebarSection('agent');
                         message.success(

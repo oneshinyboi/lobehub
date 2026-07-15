@@ -8,6 +8,7 @@ import { TopicDocumentModel } from '@/database/models/topicDocument';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { NotebookRuntimeService } from '@/server/services/notebook';
+import { assertCanEditResource } from '@/server/services/resourcePermission';
 
 import {
   assertWorkspaceRowManageable,
@@ -138,6 +139,15 @@ export const notebookRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // General-access write guard, mirroring `document.updateDocument`.
+      await assertCanEditResource({
+        db: ctx.serverDB,
+        resourceId: input.id,
+        resourceType: 'document',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId ?? undefined,
+      });
+
       let contentToUpdate = input.content;
 
       // Handle append mode

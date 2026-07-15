@@ -9,6 +9,7 @@ import Header from './index';
 const mocks = vi.hoisted(() => ({
   agentState: {
     activeAgentId: 'agent-1',
+    authorId: undefined as string | undefined,
     config: {
       model: 'gpt-4o',
       plugins: ['lobe-web-browsing'],
@@ -20,7 +21,9 @@ const mocks = vi.hoisted(() => ({
       tags: ['test'],
       title: 'Test Agent',
     },
+    createdAt: undefined as Date | undefined,
     systemRole: 'You are helpful.',
+    visibility: 'public' as 'private' | 'public',
   },
   globalState: {
     isStatusInit: true,
@@ -174,11 +177,17 @@ vi.mock('@/store/agent', () => ({
 
 vi.mock('@/store/agent/selectors', () => ({
   agentSelectors: {
+    currentAgentAuthorId: (state: typeof mocks.agentState) => state.authorId,
     currentAgentConfig: (state: typeof mocks.agentState) => state.config,
+    currentAgentCreatedAt: (state: typeof mocks.agentState) => state.createdAt,
     currentAgentMeta: (state: typeof mocks.agentState) => state.meta,
     currentAgentSystemRole: (state: typeof mocks.agentState) => state.systemRole,
+    currentAgentVisibility: (state: typeof mocks.agentState) => state.visibility,
     isCurrentAgentHeterogeneous: (state: typeof mocks.agentState) =>
       state.isCurrentAgentHeterogeneous,
+  },
+  builtinAgentSelectors: {
+    isInboxAgent: () => false,
   },
 }));
 
@@ -227,6 +236,7 @@ describe('Agent profile Header', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     mocks.agentState.isCurrentAgentHeterogeneous = false;
     mocks.agentState.systemRole = 'You are helpful.';
+    mocks.agentState.visibility = 'public';
     mocks.globalState.showAgentBuilderPanel = false;
     mocks.profileState.editor = undefined;
   });

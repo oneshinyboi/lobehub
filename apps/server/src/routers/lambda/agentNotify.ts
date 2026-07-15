@@ -14,6 +14,7 @@ import { createStreamEventManager } from '@/server/modules/AgentRuntime/factory'
 import { CompletionLifecycle } from '@/server/services/agentRuntime/CompletionLifecycle';
 import type { SerializedHook } from '@/server/services/agentRuntime/hooks/types';
 import { AiAgentService } from '@/server/services/aiAgent';
+import { assertCanPerformResourceAction } from '@/server/services/resourcePermission';
 import { instantiateVerifyPlanOnStart } from '@/server/services/verify';
 
 // Module-level singleton so we don't create a new Redis connection per request.
@@ -141,6 +142,19 @@ export const agentNotifyRouter = router({
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: `Topic ${topicId} has no associated agent and no agentId was provided`,
+      });
+    }
+
+    // Workspace guard: notify executes the resolved agent (directly in user
+    // mode, via `continue` in assistant mode) — require `use` before any write.
+    if (ctx.workspaceId) {
+      await assertCanPerformResourceAction({
+        action: 'use',
+        db: ctx.serverDB,
+        resourceId: agentId,
+        resourceType: 'agent',
+        userId: ctx.userId,
+        workspaceId: ctx.workspaceId,
       });
     }
 

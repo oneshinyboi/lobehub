@@ -212,6 +212,7 @@
   "copy": "Copy",
   "copyFail": "Copy failed",
   "copySuccess": "Copied",
+  "createdAt": "Created at {{time}}",
   "dataStatistics.messages": "Messages",
   "dataStatistics.sessions": "Agents",
   "dataStatistics.today": "Today's New",
