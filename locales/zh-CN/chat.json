@@ -425,6 +425,8 @@
   "input.sendWithCmdEnter": "按 <key/> 发送",
   "input.sendWithEnter": "按 <key/> 发送",
   "input.stop": "停止",
+  "input.viewOnlyAgent": "你对该 Agent 仅有查看权限，无法发送消息。如需使用，请联系创建者或工作区管理员。",
+  "input.viewOnlyGroup": "你对该群组仅有查看权限，无法发送消息。如需使用，请联系创建者或工作区管理员。",
   "input.warp": "换行",
   "input.warpWithKey": "按 <key/> 换行",
   "inputQueue.delete": "删除",

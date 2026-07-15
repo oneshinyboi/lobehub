@@ -14,8 +14,9 @@ import { useAgentGroupTransferMenuItem } from '@/business/client/hooks/useAgentG
 import { useHasActiveWorkspace } from '@/business/client/hooks/useHasActiveWorkspace';
 import { EditingIndicator, type EditLockClient, useEditLock } from '@/features/EditLock';
 import { EditorCanvas } from '@/features/EditorCanvas';
-import PermissionsPopover from '@/features/ResourcePermission/PermissionsPopover';
+import AccessLevelTag from '@/features/ResourcePermission/AccessLevelTag';
 import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
+import { useResourcePermissionMenuItem } from '@/features/ResourcePermission/useResourcePermissionMenuItem';
 import { usePermission } from '@/hooks/usePermission';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { lambdaClient } from '@/libs/trpc/client';
@@ -57,6 +58,26 @@ const GroupProfile = memo(() => {
     currentGroup?.visibility === 'private' ? undefined : (groupId ?? undefined),
   );
   const canEdit = hasEditPermission && canEditResource;
+
+  // Member-permission entry lives inside the "..." menu, matching the agent
+  // profile header (only meaningful for public workspace groups).
+  const memberPermissionMenuItem = useResourcePermissionMenuItem(
+    'agentGroup',
+    hasActiveWorkspace && currentGroup?.visibility !== 'private'
+      ? (groupId ?? undefined)
+      : undefined,
+  );
+  const moreMenuItems = useMemo(
+    () =>
+      [
+        memberPermissionMenuItem,
+        memberPermissionMenuItem && transferMenuItems?.length
+          ? ({ type: 'divider' } as const)
+          : null,
+        ...(transferMenuItems ?? []),
+      ].filter(Boolean),
+    [memberPermissionMenuItem, transferMenuItems],
+  );
 
   const settingsModalRef = useRef<ModalInstance | null>(null);
   useEffect(
@@ -147,6 +168,14 @@ const GroupProfile = memo(() => {
             <GroupStatusTag />
             <GroupVersionReviewTag />
             <GroupForkTag />
+            <AccessLevelTag
+              resourceType={'agentGroup'}
+              resourceId={
+                hasActiveWorkspace && currentGroup?.visibility !== 'private'
+                  ? (groupId ?? undefined)
+                  : undefined
+              }
+            />
           </Flexbox>
         </Flexbox>
         {/* Header: Group Avatar + Title */}
@@ -169,17 +198,14 @@ const GroupProfile = memo(() => {
           >
             {t('startConversation')}
           </Button>
-          {!!transferMenuItems?.length && (
-            <DropdownMenu items={transferMenuItems}>
+          {moreMenuItems.length > 0 && (
+            <DropdownMenu items={moreMenuItems}>
               <ActionIcon
                 icon={MoreHorizontalIcon}
                 size={'small'}
                 style={{ color: theme.colorTextSecondary }}
               />
             </DropdownMenu>
-          )}
-          {hasActiveWorkspace && groupId && currentGroup?.visibility !== 'private' && (
-            <PermissionsPopover resourceId={groupId} resourceType={'agentGroup'} />
           )}
           <Button
             disabled={!canEdit}

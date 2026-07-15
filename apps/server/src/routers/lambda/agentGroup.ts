@@ -284,6 +284,7 @@ export const agentGroupRouter = router({
           (await ctx.agentGroupRepo.transferHasForeignRows(input.id))
         ) {
           throw new TRPCError({
+            cause: { data: { code: TransferErrorCode.OwnerOnly } },
             code: 'FORBIDDEN',
             message: "Only workspace owners can delete a group carrying others' conversations",
           });

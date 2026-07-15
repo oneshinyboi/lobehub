@@ -437,6 +437,8 @@ export default {
   'loading': 'Loading...',
   'mail.business': 'Business Cooperation',
   'mail.support': 'Email Support',
+  'deleteSharedOwnerOnly':
+    "Only a workspace owner can delete this — it carries other members' conversations",
   'manageOnlyCreator': 'Only the creator or a workspace owner can do this',
   'operationFailed': 'Operation failed, please try again',
   'addNew': 'Add new',

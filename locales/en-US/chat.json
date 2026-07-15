@@ -425,6 +425,8 @@
   "input.sendWithCmdEnter": "Press <key/> to send",
   "input.sendWithEnter": "Press <key/> to send",
   "input.stop": "Stop",
+  "input.viewOnlyAgent": "You have view-only access to this agent, so messages cannot be sent. Ask the creator or a workspace owner for access.",
+  "input.viewOnlyGroup": "You have view-only access to this group, so messages cannot be sent. Ask the creator or a workspace owner for access.",
   "input.warp": "New Line",
   "input.warpWithKey": "Press <key/> to insert a line break",
   "inputQueue.delete": "Delete",

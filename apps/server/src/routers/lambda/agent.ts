@@ -609,6 +609,7 @@ export const agentRouter = router({
           (await ctx.agentModel.transferHasForeignRows(input.agentId))
         ) {
           throw new TRPCError({
+            cause: { data: { code: TransferErrorCode.OwnerOnly } },
             code: 'FORBIDDEN',
             message: "Only workspace owners can delete an agent carrying others' conversations",
           });

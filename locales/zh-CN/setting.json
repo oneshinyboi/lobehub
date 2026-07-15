@@ -570,6 +570,8 @@
   "notification.push.desc": "向您的移动设备发送推送通知（需要安装 LobeHub 移动应用）",
   "notification.push.title": "移动推送通知",
   "notification.title": "通知渠道",
+  "permission.accessTag.useOnlyTip": "你在此处的成员权限为「可使用」：可以查看和使用，但不能编辑。如需编辑权限，请联系创建者或工作区管理员。",
+  "permission.accessTag.viewOnlyTip": "你在此处的成员权限为「可查看」：仅可查看，不能使用或编辑。如需更多权限，请联系创建者或工作区管理员。",
   "permission.generalAccess.editable": "可编辑",
   "permission.generalAccess.editableDesc": "成员可查看、使用和编辑",
   "permission.generalAccess.editableDocumentDesc": "成员可查看和编辑",

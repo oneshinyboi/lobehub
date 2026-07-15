@@ -9,6 +9,7 @@ import ShareButton from '@/business/client/features/PageShare/ShareButton';
 import { DESKTOP_HEADER_ICON_SMALL_SIZE } from '@/const/layoutTokens';
 import { AutoSaveHint } from '@/features/EditorCanvas';
 import NavHeader from '@/features/NavHeader';
+import AccessLevelTag from '@/features/ResourcePermission/AccessLevelTag';
 import ToggleRightPanelButton from '@/features/RightPanel/ToggleRightPanelButton';
 import { usePermission } from '@/hooks/usePermission';
 
@@ -20,12 +21,13 @@ import { useMenu } from './useMenu';
 
 const Header = memo(() => {
   const { t } = useTranslation('file');
-  const [documentId, emoji, title, parentId, onBack] = usePageEditorStore((s) => [
+  const [documentId, emoji, title, parentId, onBack, isWorkspacePage] = usePageEditorStore((s) => [
     s.documentId,
     s.emoji,
     s.title,
     s.parentId,
     s.onBack,
+    s.isWorkspacePage,
   ]);
   const rightPanelMode = usePageEditorStore(selectors.rightPanelMode);
   const { allowed: hasEditPermission } = usePermission('edit_own_content');
@@ -60,6 +62,10 @@ const Header = memo(() => {
       }
       right={
         <>
+          <AccessLevelTag
+            resourceId={isWorkspacePage ? documentId : undefined}
+            resourceType={'document'}
+          />
           <EditingIndicator />
           {documentId && <ShareButton documentId={documentId} />}
           {/* Three-dot menu */}

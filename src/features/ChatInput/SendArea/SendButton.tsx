@@ -4,13 +4,9 @@ import isEqual from 'fast-deep-equal';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
 import { usePermission } from '@/hooks/usePermission';
-import { useAgentStore } from '@/store/agent';
-import { builtinAgentSelectors } from '@/store/agent/selectors';
-import { useAgentGroupStore } from '@/store/agentGroup';
-import { agentGroupSelectors } from '@/store/agentGroup/selectors';
 
+import { useChatInputResourceAccess } from '../hooks/useChatInputResourceAccess';
 import { selectors, useChatInputStore } from '../store';
 
 const SendButton = memo(() => {
@@ -26,36 +22,9 @@ const SendButton = memo(() => {
   // visibly grays out and a tooltip explains why.
   const { allowed: canCreate, reason } = usePermission('create_content');
 
-  // Per-resource General-access gating: a workspace member with view-only
-  // access on the active agent (or group) can read the conversation but the
-  // server rejects sends. Only gate when the input is bound to a resolvable
-  // workspace resource — home/new-conversation inputs (no explicit agentId)
-  // and personal resources stay untouched.
-  const chatInputAgentId = useChatInputStore((s) => s.agentId);
-  const inboxAgentId = useAgentStore(builtinAgentSelectors.inboxAgentId);
-  const agentVisibility = useAgentStore((s) =>
-    chatInputAgentId ? s.agentMap[chatInputAgentId]?.visibility : undefined,
-  );
-  // Group conversations reuse the supervisor's agentId as the input context
-  // (see useGroupContext), so a supervisor match means "this input sends to
-  // the group" — gate on the group's access level instead of the agent's.
-  const activeGroup = useAgentGroupStore((s) =>
-    s.activeGroupId ? agentGroupSelectors.getGroupById(s.activeGroupId)(s) : undefined,
-  );
-  const isGroupContext =
-    !!chatInputAgentId && !!activeGroup && activeGroup.supervisorAgentId === chatInputAgentId;
-
-  const gatedResourceId = isGroupContext
-    ? activeGroup.visibility === 'private'
-      ? undefined
-      : activeGroup.id
-    : chatInputAgentId && chatInputAgentId !== inboxAgentId && agentVisibility !== 'private'
-      ? chatInputAgentId
-      : undefined;
-  const { canUseResource } = useResourceAccess(
-    isGroupContext ? 'agentGroup' : 'agent',
-    gatedResourceId,
-  );
+  // Per-resource General-access gating: a member with view-only access on the
+  // bound agent/group can read the conversation but the server rejects sends.
+  const { canUseResource } = useChatInputResourceAccess();
   const viewOnly = !canUseResource;
   const canSend = canCreate && !viewOnly;
 

@@ -418,6 +418,10 @@ export default {
   'input.inputCompletionError.title': 'Input suggestions paused',
   'input.modelUnavailable':
     'The current model is no longer available. Choose another model to continue.',
+  'input.viewOnlyAgent':
+    'You have view-only access to this agent, so messages cannot be sent. Ask the creator or a workspace owner for access.',
+  'input.viewOnlyGroup':
+    'You have view-only access to this group, so messages cannot be sent. Ask the creator or a workspace owner for access.',
   'input.heteroPlus.tooltip': 'Formatting and scheduling',
   'input.more': 'More',
   'input.schedule.cancel': 'Cancel',

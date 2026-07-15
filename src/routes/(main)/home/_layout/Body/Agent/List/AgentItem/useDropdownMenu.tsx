@@ -34,7 +34,7 @@ import { useHomeStore } from '@/store/home';
 import { homeAgentListSelectors } from '@/store/home/selectors';
 import { useUserStore } from '@/store/user';
 import { userProfileSelectors } from '@/store/user/selectors';
-import { isForbiddenError } from '@/utils/forbiddenError';
+import { isForbiddenError, isOwnerOnlyForbiddenError } from '@/utils/forbiddenError';
 
 import { useRevealSidebarSection } from '../../../../hooks';
 
@@ -333,9 +333,11 @@ export const useAgentDropdownMenu = ({
                   message.success(t('confirmRemoveSessionSuccess'));
                 } catch (error) {
                   message.error(
-                    isForbiddenError(error)
-                      ? t('manageOnlyCreator', { ns: 'common' })
-                      : t('operationFailed', { ns: 'common' }),
+                    isOwnerOnlyForbiddenError(error)
+                      ? t('deleteSharedOwnerOnly', { ns: 'common' })
+                      : isForbiddenError(error)
+                        ? t('manageOnlyCreator', { ns: 'common' })
+                        : t('operationFailed', { ns: 'common' }),
                   );
                 }
               },

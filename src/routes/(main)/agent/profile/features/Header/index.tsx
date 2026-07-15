@@ -26,6 +26,7 @@ import { DESKTOP_HEADER_ICON_SMALL_SIZE } from '@/const/layoutTokens';
 import AgentBreadcrumb from '@/features/AgentBreadcrumb';
 import NavHeader from '@/features/NavHeader';
 import { formatPageEditorInfoTime } from '@/features/PageEditor/formatPageEditorInfoTime';
+import AccessLevelTag from '@/features/ResourcePermission/AccessLevelTag';
 import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
 import { useResourcePermissionMenuItem } from '@/features/ResourcePermission/useResourcePermissionMenuItem';
 import ToggleRightPanelButton from '@/features/RightPanel/ToggleRightPanelButton';
@@ -320,6 +321,10 @@ const Header = memo(() => {
           <AgentStatusTag />
           <AgentVersionReviewTag />
           <AgentForkTag />
+          <AccessLevelTag
+            resourceId={showPermissionsEntry ? (activeAgentId ?? undefined) : undefined}
+            resourceType={'agent'}
+          />
         </Flexbox>
       }
       right={

@@ -212,6 +212,10 @@ export default {
   'agentTab.prompt': 'Agent Profile',
   'agentTab.selfIteration': 'Self-Iteration',
   'agentTab.tts': 'Voice Service',
+  'permission.accessTag.useOnlyTip':
+    'Your member permission here is "Can use" — you can view and use it, but not edit. Ask the creator or a workspace owner for edit access.',
+  'permission.accessTag.viewOnlyTip':
+    'Your member permission here is "Can view" — you can view it, but not use or edit. Ask the creator or a workspace owner for more access.',
   'permission.generalAccess.label': 'Member Permissions',
   'permission.generalAccess.trigger': 'Members: {{level}}',
   'permission.generalAccess.editable': 'Can edit',
