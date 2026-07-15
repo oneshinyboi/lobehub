@@ -116,7 +116,7 @@ const TopicChatDrawer = memo(() => {
   const activity = useTaskStore(taskActivitySelectors.activeDrawerTopicActivity);
   const closeTopicDrawer = useTaskStore((s) => s.closeTopicDrawer);
   const useFetchTaskDetail = useTaskStore((s) => s.useFetchTaskDetail);
-  const enableTopicLinkShare = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
+  const enableTopicLinkShare = true;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
 
   // Hydrate task detail when the drawer is opened outside of TaskDetailPage
