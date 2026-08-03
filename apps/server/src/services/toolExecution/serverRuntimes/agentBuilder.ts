@@ -11,10 +11,12 @@ import { BRANDING_PROVIDER } from '@lobechat/business-const';
 import { modelsResultsPrompt } from '@lobechat/prompts';
 import { getPluginMode, upsertPluginMode } from '@lobechat/types';
 
+import { getHiddenBuiltinModelsForUser } from '@/business/server/aiProvider';
 import { AgentModel } from '@/database/models/agent';
 import { PluginModel } from '@/database/models/plugin';
 import { AiInfraRepos } from '@/database/repositories/aiInfra';
 import { DiscoverService } from '@/server/services/discover';
+import { filterHiddenProviderModels } from '@/utils/aiProvider';
 
 import { type ToolExecutionContext, type ToolExecutionResult } from '../types';
 import { type ServerRuntimeRegistration } from './types';
@@ -31,15 +33,11 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
     if (!context.userId || !context.serverDB) {
       throw new Error('userId and serverDB are required for Agent Builder execution');
     }
+    const userId = context.userId;
 
-    const agentModel = new AgentModel(context.serverDB, context.userId, context.workspaceId);
-    const pluginModel = new PluginModel(context.serverDB, context.userId, context.workspaceId);
-    const aiInfraRepos = new AiInfraRepos(
-      context.serverDB,
-      context.userId,
-      {},
-      context.workspaceId,
-    );
+    const agentModel = new AgentModel(context.serverDB, userId, context.workspaceId);
+    const pluginModel = new PluginModel(context.serverDB, userId, context.workspaceId);
+    const aiInfraRepos = new AiInfraRepos(context.serverDB, userId, {}, context.workspaceId);
     const discoverService = new DiscoverService();
 
     return {
@@ -47,8 +45,16 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
         params: GetAvailableModelsParams,
       ): Promise<ToolExecutionResult> => {
         try {
-          const allProviders = await aiInfraRepos.getAiProviderList();
-          const enabledProviders = allProviders.filter((p) => p.enabled);
+          const [allProviders, hiddenBuiltinModels] = await Promise.all([
+            aiInfraRepos.getAiProviderList(),
+            getHiddenBuiltinModelsForUser(userId),
+          ]);
+          /**
+           * An unresolved access policy must not be interpreted as an empty blocklist.
+           * Keep the model tool empty until the user-scoped policy can be loaded.
+           */
+          const enabledProviders =
+            hiddenBuiltinModels === undefined ? [] : allProviders.filter((p) => p.enabled);
 
           // LobeHub provider first, then by sort order
           enabledProviders.sort((a, b) => {
@@ -87,9 +93,14 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
               enabled: true,
               type: 'chat',
             });
+            const visibleChatModels = filterHiddenProviderModels(
+              enabledChatModels,
+              provider.id,
+              hiddenBuiltinModels,
+            );
 
             const remaining = MAX_MODELS - totalModels;
-            const sliced = enabledChatModels.slice(0, remaining);
+            const sliced = visibleChatModels.slice(0, remaining);
 
             if (sliced.length === 0) continue;
 
@@ -230,7 +241,11 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
           }
 
           if (updatedParts.length === 0) {
-            return { content: 'No fields to update.', state: { success: true }, success: true };
+            return {
+              content: 'No fields to update.',
+              state: { agentId, success: true },
+              success: true,
+            };
           }
 
           return {
@@ -267,7 +282,7 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
             content: params.prompt
               ? `Successfully updated system prompt (${params.prompt.length} characters)`
               : 'Successfully cleared system prompt',
-            state: { newPrompt: params.prompt, success: true },
+            state: { agentId, newPrompt: params.prompt, success: true },
             success: true,
           };
         } catch (error) {
@@ -309,7 +324,7 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
               }
               return {
                 content: `Successfully enabled "${identifier}" for agent "${agentId}"`,
-                state: { installed: true, pluginId: identifier, success: true },
+                state: { agentId, installed: true, pluginId: identifier, success: true },
                 success: true,
               };
             } catch (error) {
@@ -362,7 +377,7 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
 
           return {
             content: `Successfully enabled plugin "${identifier}" for agent "${agentId}"`,
-            state: { installed: true, pluginId: identifier, success: true },
+            state: { agentId, installed: true, pluginId: identifier, success: true },
             success: true,
           };
         } catch (error) {

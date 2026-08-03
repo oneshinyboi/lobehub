@@ -1,3 +1,14 @@
+import type { HeteroQuotaWindow } from '@lobechat/heterogeneous-agents/quota';
+
+import type { HeterogeneousCliAgentType } from './binary';
+
+export const AMP_CLI_INSTALL_DOCS_URL = 'https://ampcode.com/manual';
+
+export const AMP_CLI_INSTALL_COMMANDS = [
+  'curl -fsSL https://ampcode.com/install.sh | bash',
+  'brew install ampcode/tap/ampcode',
+] as const;
+
 export const CLAUDE_CODE_CLI_INSTALL_DOCS_URL =
   'https://docs.anthropic.com/en/docs/claude-code/setup';
 
@@ -12,6 +23,12 @@ export const CODEX_CLI_INSTALL_DOCS_URL =
 export const CODEX_CLI_INSTALL_COMMANDS = [
   'npm install -g @openai/codex',
   'brew install --cask codex',
+] as const;
+
+export const OPENCODE_CLI_INSTALL_DOCS_URL = 'https://opencode.ai/docs';
+
+export const OPENCODE_CLI_INSTALL_COMMANDS = [
+  'curl -fsSL https://opencode.ai/install | bash',
 ] as const;
 
 export const HeterogeneousAgentSessionErrorCode = {
@@ -35,21 +52,44 @@ export interface HeterogeneousAgentRateLimitInfo {
   status?: string;
 }
 
-export interface HeteroQuotaWindow {
-  resetsAt: number | null;
-  usedPercent: number;
-  windowMinutes: number;
-}
+// The Claude quota snapshot shapes are shared with the device RPC path
+// (`lh connect` samples the same snapshot), so they live in the
+// heterogeneous-agents quota entry; re-export them for existing IPC callers.
+export type {
+  ClaudeCodeAccountIdentity,
+  ClaudeCodeQuotaReading,
+  ClaudeCodeQuotaSnapshot,
+  ClaudeCodeQuotaUnavailableReason,
+  ClaudeCodeScopedWeekly,
+  HeteroQuotaWindow,
+} from '@lobechat/heterogeneous-agents/quota';
 
 export type CodexQuotaWindow = HeteroQuotaWindow;
 
+export interface CodexRateLimitSnapshot {
+  /** Canonical metered limit identifier, for example `codex` or `codex_other`. */
+  limitId: string;
+  limitName: string | null;
+  primary: CodexQuotaWindow | null;
+  secondary: CodexQuotaWindow | null;
+}
+
+export interface CodexRateLimitResetCredit {
+  expiresAt: number | null;
+  grantedAt: number | null;
+  /** Opaque backend identifier used only when redeeming this specific credit. */
+  id: string | null;
+  redeemedAt?: number | null;
+  redeemStartedAt?: number | null;
+  resetType: string | null;
+  status: string;
+  title: string | null;
+}
+
 export interface CodexRateLimitResetCredits {
   availableCount: number;
-  credits?: {
-    expiresAt: number | null;
-    grantedAt: number | null;
-    status: string;
-  }[];
+  /** Detailed rows when supported by the installed Codex CLI/backend. */
+  credits?: CodexRateLimitResetCredit[];
   nextExpiresAt?: number | null;
   totalEarnedCount?: number;
 }
@@ -58,42 +98,28 @@ export interface CodexQuotaSnapshot {
   error: string | null;
   provider: 'codex';
   rateLimitResetCredits?: CodexRateLimitResetCredits | null;
+  /** Complete multi-bucket view when supported by the installed Codex app-server. */
+  rateLimits?: CodexRateLimitSnapshot[];
   session: CodexQuotaWindow | null;
   status: 'error' | 'ok' | 'unavailable';
   updatedAt: number;
   weekly: CodexQuotaWindow | null;
 }
 
-/**
- * Why the quota can't be shown. `external-auth` means the agent is configured
- * with an API key / custom base url, so subscription quota does not apply;
- * the credential reasons mean no fresh OAuth login was found on this machine.
- */
-export type ClaudeCodeQuotaUnavailableReason =
-  'credentials-expired' | 'credentials-not-found' | 'external-auth';
+export type CodexRateLimitResetOutcome =
+  'alreadyRedeemed' | 'noCredit' | 'nothingToReset' | 'reset';
 
-export interface ClaudeCodeScopedWeekly {
-  /** Display name of the model the window is scoped to, e.g. "Fable". */
-  modelName: string;
-  window: HeteroQuotaWindow;
-}
-
-export interface ClaudeCodeQuotaSnapshot {
-  error: string | null;
-  provider: 'claude-code';
-  reason?: ClaudeCodeQuotaUnavailableReason;
-  /** Model-scoped weekly window (e.g. Fable/Opus), when the plan reports one. */
-  scopedWeekly: ClaudeCodeScopedWeekly | null;
-  session: HeteroQuotaWindow | null;
-  status: 'error' | 'ok' | 'unavailable';
-  updatedAt: number;
-  weekly: HeteroQuotaWindow | null;
+export interface CodexRateLimitResetResult {
+  outcome: CodexRateLimitResetOutcome;
+  quota: CodexQuotaSnapshot;
 }
 
 export interface HeterogeneousAgentSessionError {
-  agentType?: string;
+  agentType?: HeterogeneousCliAgentType;
   code?: HeterogeneousAgentSessionErrorCode | string;
   command?: string;
+  /** Diagnostic context from the CLI's terminal event (subtype, HTTP status, turn count, …). */
+  details?: Record<string, unknown>;
   docsUrl?: string;
   installCommands?: readonly string[];
   message: string;

@@ -1,5 +1,6 @@
 import { CUSTOM_FOLDER_FILE_TYPE, DERIVED_DOCUMENT_SOURCE_TYPE } from '@lobechat/const';
-import { copyToClipboard, createRawModal, Icon } from '@lobehub/ui';
+import type { SFSymbol } from '@lobechat/electron-client-ipc';
+import { copyToClipboard, Icon, Tooltip } from '@lobehub/ui';
 import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import { type ItemType } from 'antd/es/menu/interface';
@@ -24,6 +25,7 @@ import { PAGE_FILE_TYPE } from '@/features/ResourceManager/constants';
 import VisibilityConfirmContent from '@/features/VisibilityConfirmContent';
 import { useAppOrigin } from '@/hooks/useAppOrigin';
 import { usePermission } from '@/hooks/usePermission';
+import { useResourceManageable } from '@/hooks/useResourceManageable';
 import { documentService } from '@/services/document';
 import { useFileStore } from '@/store/file';
 import { useKnowledgeBaseStore } from '@/store/library';
@@ -31,8 +33,9 @@ import { useTreeStore } from '@/store/tree';
 import { useUserStore } from '@/store/user';
 import { userProfileSelectors } from '@/store/user/selectors';
 import { downloadFile } from '@/utils/client/downloadFile';
+import { isForbiddenError } from '@/utils/forbiddenError';
 
-import MoveToFolderModal from '../MoveToFolderModal';
+import { openMoveToFolderModal } from '../MoveToFolderModal';
 
 interface UseFileItemDropdownParams {
   enabled?: boolean;
@@ -47,8 +50,10 @@ interface UseFileItemDropdownParams {
   visibility?: 'private' | 'public' | null;
 }
 
+type FileMenuItem = ItemType & { sfSymbol?: SFSymbol };
+
 interface UseFileItemDropdownReturn {
-  menuItems: () => ItemType[];
+  menuItems: () => FileMenuItem[];
 }
 
 /**
@@ -70,6 +75,9 @@ export const useFileItemDropdown = ({
   const appOrigin = useAppOrigin();
   const { allowed: canEditResources } = usePermission('edit_own_content');
   const currentUserId = useUserStore(userProfileSelectors.userId);
+  // Row-level ownership: only the creator or a workspace owner may rename or
+  // delete a shared resource — mirrors the server-side enforcement.
+  const canManage = useResourceManageable(userId);
 
   const {
     deleteResource,
@@ -317,7 +325,7 @@ export const useFileItemDropdown = ({
             onClick: async ({ domEvent }) => {
               domEvent.stopPropagation();
 
-              createRawModal(MoveToFolderModal, {
+              openMoveToFolderModal({
                 fileId: id,
                 knowledgeBaseId: libraryId,
               });
@@ -325,13 +333,22 @@ export const useFileItemDropdown = ({
           },
         canEditResources &&
           isFolder && {
+            disabled: !canManage,
             icon: <Icon icon={PencilIcon} />,
             key: 'rename',
-            label: t('FileManager.actions.rename'),
+            label: canManage ? (
+              t('FileManager.actions.rename')
+            ) : (
+              <Tooltip title={t('manageOnlyCreator', { ns: 'common' })}>
+                <span>{t('FileManager.actions.rename')}</span>
+              </Tooltip>
+            ),
             onClick: async ({ domEvent }) => {
               domEvent.stopPropagation();
+              if (!canManage) return;
               onRenameStart?.();
             },
+            sfSymbol: 'pencil',
           },
         {
           icon: <Icon icon={LinkIcon} />,
@@ -353,11 +370,13 @@ export const useFileItemDropdown = ({
             await copyToClipboard(urlToCopy);
             message.success(t('FileManager.actions.copyUrlSuccess'));
           },
+          sfSymbol: 'doc.on.doc',
         },
         !isFolder && {
           icon: <Icon icon={DownloadIcon} />,
           key: 'download',
           label: t('download', { ns: 'common' }),
+          sfSymbol: 'square.and.arrow.down',
           onClick: async ({ domEvent }) => {
             domEvent.stopPropagation();
             const key = 'file-downloading';
@@ -405,11 +424,19 @@ export const useFileItemDropdown = ({
         },
         canEditResources && {
           danger: true,
+          disabled: !canManage,
           icon: <Icon icon={Trash} />,
           key: 'delete',
-          label: t('delete', { ns: 'common' }),
+          label: canManage ? (
+            t('delete', { ns: 'common' })
+          ) : (
+            <Tooltip title={t('manageOnlyCreator', { ns: 'common' })}>
+              <span>{t('delete', { ns: 'common' })}</span>
+            </Tooltip>
+          ),
           onClick: async ({ domEvent }) => {
             domEvent.stopPropagation();
+            if (!canManage) return;
             confirmModal({
               content: isFolder
                 ? t('FileManager.actions.confirmDeleteFolder')
@@ -417,26 +444,36 @@ export const useFileItemDropdown = ({
               okButtonProps: { danger: true },
               title: t('delete', { ns: 'common' }),
               onOk: async () => {
-                // Use optimistic delete - instant UI update, sync in background
-                await deleteResource(id);
+                try {
+                  // Use optimistic delete - instant UI update, sync in background
+                  await deleteResource(id);
 
-                // Revalidate tree for the parent folder
-                const { queryParams } = useFileStore.getState();
-                const parentId = queryParams?.parentId ?? '';
-                void useTreeStore.getState().revalidate(parentId);
-                await refreshFileList({ revalidateResources: false });
+                  // Revalidate tree for the parent folder
+                  const { queryParams } = useFileStore.getState();
+                  const parentId = queryParams?.parentId ?? '';
+                  void useTreeStore.getState().revalidate(parentId);
+                  await refreshFileList({ revalidateResources: false });
 
-                message.success(t('FileManager.actions.deleteSuccess'));
+                  message.success(t('FileManager.actions.deleteSuccess'));
+                } catch (error) {
+                  message.error(
+                    isForbiddenError(error)
+                      ? t('manageOnlyCreator', { ns: 'common' })
+                      : t('operationFailed', { ns: 'common' }),
+                  );
+                }
               },
             });
           },
+          sfSymbol: 'trash',
         },
-      ] as ItemType[]
+      ] as FileMenuItem[]
     ).filter(Boolean);
   }, [
     addFilesToKnowledgeBase,
     appOrigin,
     canEditResources,
+    canManage,
     currentUserId,
     deleteResource,
     filename,

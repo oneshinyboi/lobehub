@@ -134,7 +134,7 @@ class AgentService {
   };
 
   /**
-   * Bidirectional visibility switch (LOBE-11551). The server only allows the
+   * Bidirectional visibility switch. The server only allows the
    * agent's creator or a workspace owner to pull a published agent back to
    * private, and rejects builtin agents (LobeAI etc.) outright.
    */
@@ -305,6 +305,22 @@ class AgentService {
   ): Promise<{ agentId: string; slug: string | null }> => {
     return lambdaClient.agent.transferAgent.mutate({
       agentId,
+      targetVisibility,
+      targetWorkspaceId,
+    });
+  };
+
+  /**
+   * Batch transfer: moves all agents in one request / one DB transaction
+   * instead of a serial per-agent call chain.
+   */
+  transferAgents = async (
+    agentIds: string[],
+    targetWorkspaceId: string | null,
+    targetVisibility?: 'private' | 'public',
+  ): Promise<{ agentId: string; slug: string | null }[]> => {
+    return lambdaClient.agent.transferAgents.mutate({
+      agentIds,
       targetVisibility,
       targetWorkspaceId,
     });

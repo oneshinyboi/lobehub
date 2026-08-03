@@ -54,6 +54,19 @@ describe('TopicModel - Query', () => {
       expect(result.items[2].id).toBe('4');
     });
 
+    it('should project the row owner userId so clients can filter by ownership', async () => {
+      await serverDB.transaction(async (tx) => {
+        await tx.insert(users).values([{ id: '456' }]);
+        await tx
+          .insert(topics)
+          .values([{ id: 'own-topic', userId, sessionId, updatedAt: new Date('2023-01-01') }]);
+      });
+
+      const result = await topicModel.query({ containerId: sessionId });
+
+      expect(result.items[0].userId).toBe(userId);
+    });
+
     it('should isolate personal and workspace topics for the same user', async () => {
       await serverDB.insert(workspaces).values({
         id: 'topic-workspace',
@@ -200,7 +213,7 @@ describe('TopicModel - Query', () => {
       // The client sorts the sidebar by `sortUpdatedAt`, so it must carry the same
       // activity time the server ORDER BY uses (topicActivityAt) — otherwise the two
       // sorts disagree and the list jumps. `updatedAt` stays the raw row value so
-      // rename/favorite edits still show a real edit time. (LOBE-11543)
+      // rename/favorite edits still show a real edit time. 
       await serverDB.insert(topics).values([
         { id: 'has-msg', sessionId, updatedAt: new Date('2023-01-01'), userId },
         { id: 'no-msg', sessionId, updatedAt: new Date('2023-03-01'), userId },

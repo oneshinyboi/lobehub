@@ -1,4 +1,9 @@
-import type { ConversationContext, MessageMetadata, UploadFileItem } from '@lobechat/types';
+import type {
+  ConversationContext,
+  MessageMapScope,
+  MessageMetadata,
+  UploadFileItem,
+} from '@lobechat/types';
 
 /**
  * Operation Type Definitions
@@ -60,7 +65,6 @@ export type OperationType =
 
   // === Sub-Agent (Desktop only) ===
   | 'execClientSubAgent' // Dispatch single sub-agent on the desktop client
-  | 'execClientSubAgents' // Dispatch multiple sub-agents on the desktop client
 
   // === Context Compression ===
   // Context compression (compress old messages into summary)
@@ -152,8 +156,21 @@ export interface OperationMetadata {
   // Runtime hooks (collected during execution, executed after completion)
   runtimeHooks?: RuntimeHooks;
 
+  /**
+   * Server-side operation id reported by the agent gateway for this local
+   * runtime operation. Preferred over the local nanoid when surfacing an
+   * operation id for tracing (e.g. the message "Copy Operation ID" action).
+   */
+  serverOperationId?: string;
+
   // Performance information
   startTime: number;
+
+  /**
+   * Upstream stream retry state surfaced by heterogeneous agents while no
+   * assistant output has arrived yet.
+   */
+  streamRetry?: StreamRetryMetadata;
 
   /**
    * The model text stream has finished and there is no visible follow-up phase
@@ -161,6 +178,16 @@ export interface OperationMetadata {
    * (`agent_runtime_end`) for cache, queue, unread, and notification effects.
    */
   visibleLoadingDone?: boolean;
+}
+
+export interface StreamRetryMetadata {
+  agentType?: string;
+  attempt?: number;
+  delayMs?: number;
+  error?: string;
+  errorStatus?: number;
+  maxAttempts?: number;
+  provider?: string;
 }
 
 /**
@@ -384,9 +411,11 @@ export const mergeQueuedMessages = (messages: QueuedMessage[]): MergedQueuedMess
 export interface OperationFilter {
   agentId?: string;
   groupId?: string;
+  isNew?: boolean;
   messageId?: string;
+  scope?: MessageMapScope;
   status?: OperationStatus | OperationStatus[];
-  threadId?: string;
+  threadId?: string | null;
   topicId?: string | null;
   type?: OperationType | OperationType[];
 }

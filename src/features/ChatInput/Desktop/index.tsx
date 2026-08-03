@@ -24,6 +24,7 @@ import ControlBar from '../ControlBar';
 import InputEditor from '../InputEditor';
 import { useSkillDrop } from '../InputEditor/ActionTag/useSkillDrop';
 import { type PlaceholderVariant } from '../InputEditor/Placeholder';
+import { useTopicDrop } from '../InputEditor/ReferTopic/useTopicDrop';
 import { useWorkspaceFileDrop } from '../InputEditor/useWorkspaceFileDrop';
 import SendArea from '../SendArea';
 import TypoBar from '../TypoBar';
@@ -90,6 +91,7 @@ interface DesktopChatInputProps extends ActionToolbarProps {
   controlBarSlot?: ReactNode;
   extentHeaderContent?: ReactNode;
   hidden?: boolean;
+  initialContent?: string;
   inputContainerProps?: ChatInputProps;
   /**
    * Swap the action bar and send area for skeleton placeholders while
@@ -119,6 +121,7 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
     extraActionItems,
     dropdownPlacement,
     hidden,
+    initialContent,
     isConfigLoading = false,
     leftContent,
     placeholder,
@@ -144,18 +147,25 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
 
     const chatKey = useChatStore(chatSelectors.currentChatKey);
 
+    // The ControlBar (or the custom slot standing in for it) hosts the
+    // context-window token tag; without one, SendArea keeps it beside Send.
+    const hasControlBar = Boolean(controlBarSlot) || showControlBar;
+
     const setExpand = useChatInputStore((s) => s.setExpand);
     const skillDrop = useSkillDrop();
+    const topicDrop = useTopicDrop();
     const workspaceFileDrop = useWorkspaceFileDrop();
 
     // Fan a single drag event out to every custom-MIME drop handler. Each one
     // no-ops unless its own MIME is present, so ordering is irrelevant.
     const handleDragOver = (event: React.DragEvent) => {
       skillDrop.onDragOver(event);
+      topicDrop.onDragOver(event);
       workspaceFileDrop.onDragOver(event);
     };
     const handleDrop = (event: React.DragEvent) => {
       skillDrop.onDrop(event);
+      topicDrop.onDrop(event);
       workspaceFileDrop.onDrop(event);
     };
 
@@ -232,10 +242,10 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
                   (sendAreaPrefix ? (
                     <Flexbox horizontal align={'center'} gap={6}>
                       {sendAreaPrefix}
-                      <SendArea />
+                      <SendArea hideContextWindow={hasControlBar} />
                     </Flexbox>
                   ) : (
-                    <SendArea />
+                    <SendArea hideContextWindow={hasControlBar} />
                   ))
                 }
               />
@@ -254,7 +264,11 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
           {...inputContainerProps}
           className={cx(expand && styles.inputFullscreen, inputContainerProps?.className)}
         >
-          <InputEditor placeholder={placeholder} placeholderVariant={placeholderVariant} />
+          <InputEditor
+            initialContent={initialContent}
+            placeholder={placeholder}
+            placeholderVariant={placeholderVariant}
+          />
         </ChatInput>
         {controlBarSlot ?? (showControlBar && <ControlBar />)}
         {showFootnote && !expand && (

@@ -80,17 +80,32 @@ export const resolveBlockedTools =
   async (instruction, state) => {
     const { payload } = instruction as Extract<AgentInstruction, { type: 'resolve_blocked_tools' }>;
     const { operation, transports } = host;
+    const agentId = operation.agentId ?? state.metadata?.agentId;
+    const groupId = operation.groupId ?? state.metadata?.groupId;
+    const threadId = operation.threadId ?? state.metadata?.threadId;
+    const topicId = operation.topicId ?? state.metadata?.topicId;
     const events: AgentEvent[] = [];
     const newState = structuredClone(state);
+    const blockedContent = payload.blockedContent ?? BLOCKED_TOOL_CONTENT;
+    const blockedReason = payload.blockedReason ?? BLOCKED_TOOL_ERROR;
     const toolResults: Array<{ data: ToolRunResult; toolCallId: string }> = [];
     const toolMessageIds: string[] = [];
 
+    if (!agentId) {
+      throw new Error(
+        `[resolve_blocked_tools] Missing agentId for tool messages (op=${operation.operationId})`,
+      );
+    }
+
     for (const toolPayload of payload.toolsCalling) {
       const result: ToolRunResult = {
-        content: BLOCKED_TOOL_CONTENT,
-        error: BLOCKED_TOOL_ERROR,
+        content: blockedContent,
+        error: blockedReason,
         executionTime: 0,
-        state: { type: 'blocked' },
+        state: {
+          ...(payload.blockedReason && { reason: blockedReason }),
+          type: 'blocked',
+        },
         success: false,
       };
 
@@ -110,22 +125,22 @@ export const resolveBlockedTools =
 
       try {
         const toolMessage = await transports.messages.createToolMessage({
-          agentId: state.metadata!.agentId!,
+          agentId,
           content: result.content,
-          groupId: state.metadata?.groupId ?? undefined,
+          groupId,
           metadata: { toolExecutionTimeMs: 0 },
           parentId: payload.parentMessageId,
           plugin: toolPayload as any,
           pluginError: result.error,
           pluginIntervention: {
-            rejectedReason: BLOCKED_TOOL_ERROR,
+            rejectedReason: blockedReason,
             status: 'rejected',
           },
           pluginState: result.state,
           role: 'tool',
-          threadId: state.metadata?.threadId,
+          threadId,
           tool_call_id: toolPayload.id,
-          topicId: state.metadata?.topicId,
+          topicId,
         });
         toolMessageIds.push(toolMessage.id);
       } catch (error) {
@@ -171,7 +186,17 @@ export const resolveAbortedTools =
   async (instruction, state) => {
     const { payload } = instruction as Extract<AgentInstruction, { type: 'resolve_aborted_tools' }>;
     const { operation, transports } = host;
+    const agentId = operation.agentId ?? state.metadata?.agentId;
+    const groupId = operation.groupId ?? state.metadata?.groupId;
+    const threadId = operation.threadId ?? state.metadata?.threadId;
+    const topicId = operation.topicId ?? state.metadata?.topicId;
     const events: AgentEvent[] = [];
+
+    if (!agentId) {
+      throw new Error(
+        `[resolve_aborted_tools] Missing agentId for tool messages (op=${operation.operationId})`,
+      );
+    }
 
     await transports.stream.publishEvent({
       data: {
@@ -188,16 +213,16 @@ export const resolveAbortedTools =
     for (const toolPayload of payload.toolsCalling) {
       try {
         await transports.messages.createToolMessage({
-          agentId: state.metadata!.agentId!,
+          agentId,
           content: ABORTED_TOOL_CONTENT,
-          groupId: state.metadata?.groupId ?? undefined,
+          groupId,
           parentId: payload.parentMessageId,
           plugin: toolPayload as any,
           pluginIntervention: { status: 'aborted' },
           role: 'tool',
-          threadId: state.metadata?.threadId,
+          threadId,
           tool_call_id: toolPayload.id,
-          topicId: state.metadata?.topicId,
+          topicId,
         });
       } catch (error) {
         await publishPersistError(host, error);
