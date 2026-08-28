@@ -27,7 +27,7 @@ const ShareButton = memo<ShareButtonProps>(({ mobile, setOpen, open }) => {
   // topic-share policy is read off that agent — same resolution the group's
   // messages and topics are written with.
   const { agentId, topicId: activeTopicId } = useGroupContext();
-  const enableTopicLinkShare = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
+  const enableTopicLinkShare = true;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
 
   // Hide share button when no topic exists (no messages sent yet)
