@@ -7,7 +7,13 @@ import { withRbacPermission } from '@/business/server/trpc-middlewares/rbacPermi
 import { cloudWorkspaceAuth } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { publicProcedure, router } from '@/libs/trpc/lambda';
 import { marketUserInfo, requireMarketAuth, serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { injectCredsIntoOnlyboxesSandbox } from '@/server/services/creds/onlyboxesInjection';
 import { MarketService } from '@/server/services/market';
+import {
+  createSandboxService,
+  getSandboxProviderKind,
+  resolveSandboxSessionConfig,
+} from '@/server/services/sandbox';
 
 const log = debug('lambda-router:market:creds');
 
@@ -354,6 +360,42 @@ export const credsRouter = router({
             code: 'BAD_REQUEST',
             message: 'userId is required for credential injection',
           });
+        }
+
+        // On a self-hosted Onlyboxes sandbox, Market's inject endpoint writes
+        // the credentials into ITS OWN sandbox — which this deployment never
+        // runs in. Resolve/decrypt through Market and write into the Onlyboxes
+        // sandbox here instead. Shared with the server-side creds runtime so the
+        // desktop-client and server-side execution paths agree.
+        if (getSandboxProviderKind() === 'onlyboxes') {
+          const sandbox = await resolveSandboxSessionConfig({
+            isShareVisitorRun: false,
+            serverDB: ctx.serverDB,
+            topicId: input.topicId,
+            userId,
+            workspaceId: ctx.workspaceId,
+          });
+
+          const sandboxService = createSandboxService({
+            marketService: ctx.marketService,
+            sandboxCwd: sandbox.cwd,
+            sandboxInstanceId: sandbox.environment,
+            sandboxMode: sandbox.mode,
+            sandboxSpecification: sandbox.specification,
+            sandboxWorkingDir: sandbox.workingDir,
+            serverDB: ctx.serverDB,
+            topicId: input.topicId,
+            userId,
+          });
+
+          const result = await injectCredsIntoOnlyboxesSandbox({
+            keys: input.keys,
+            marketService: ctx.marketService,
+            sandboxService,
+            workspaceId: ctx.workspaceId ?? undefined,
+          });
+          log('inject (onlyboxes) success: notFound=%d', result.notFound.length);
+          return result;
         }
 
         const result = await ctx.marketService.market.creds.inject({

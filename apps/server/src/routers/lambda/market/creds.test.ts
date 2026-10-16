@@ -2,6 +2,8 @@
 import { MarketAPIError } from '@lobehub/market-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getSandboxProviderKind } from '@/server/services/sandbox';
+
 interface MockOrgCredRow {
   id: number;
   key: string;
@@ -10,6 +12,7 @@ interface MockOrgCredRow {
 
 const {
   mockOrgCredsList,
+  mockPersonalCredsInject,
   mockPersonalCredsList,
   mockPersonalCredsShare,
   mockPersonalCredsPublish,
@@ -18,10 +21,34 @@ const {
   mockOrgCredsList: vi.fn(async (): Promise<{ data: MockOrgCredRow[] }> => ({
     data: [{ id: 1, key: 'ORG_SECRET' }],
   })),
+  mockPersonalCredsInject: vi.fn(async () => ({
+    credentials: { env: { A: 'b' }, files: [], headers: {} },
+    notFound: [],
+    success: true,
+  })),
   mockPersonalCredsList: vi.fn(async () => ({ data: [{ id: 2, key: 'PERSONAL_SECRET' }] })),
   mockPersonalCredsPublish: vi.fn(async (id: number) => ({ id, visibility: 'public' })),
   mockPersonalCredsShare: vi.fn(async (id: number) => ({ id, visibility: 'private' })),
   mockPersonalCredsUnshare: vi.fn(async (id: number) => ({ id, visibility: 'private' })),
+}));
+
+const { mockInjectCredsIntoOnlyboxesSandbox } = vi.hoisted(() => ({
+  mockInjectCredsIntoOnlyboxesSandbox: vi.fn(async () => ({
+    credentials: { env: { OPENROUTER_API_KEY: 'sk******ca' }, files: [] },
+    notFound: [],
+    success: true,
+    unsupportedInSandbox: [],
+  })),
+}));
+
+vi.mock('@/server/services/creds/onlyboxesInjection', () => ({
+  injectCredsIntoOnlyboxesSandbox: mockInjectCredsIntoOnlyboxesSandbox,
+}));
+
+vi.mock('@/server/services/sandbox', () => ({
+  createSandboxService: vi.fn(() => ({ writeCredentials: vi.fn() })),
+  getSandboxProviderKind: vi.fn(() => 'market'),
+  resolveSandboxSessionConfig: vi.fn(async () => ({ claim: null, mode: 'ephemeral' })),
 }));
 
 vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
@@ -65,6 +92,7 @@ vi.mock('@/server/services/market', () => ({
     return {
       market: {
         creds: {
+          inject: mockPersonalCredsInject,
           list: mockPersonalCredsList,
           publish: mockPersonalCredsPublish,
           share: mockPersonalCredsShare,
@@ -306,5 +334,47 @@ describe('credsRouter share/publish/unshare', () => {
       code: 'FORBIDDEN',
       message: 'Not a member of this organization',
     });
+  });
+});
+
+describe('credsRouter inject on Onlyboxes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The desktop client executes `injectCredsToSandbox` through this route (not
+  // the server-side creds runtime). On Onlyboxes, Market's inject would write
+  // into Market's own sandbox, so the route must write into the Onlyboxes one
+  // instead — via the shared helper.
+  it('writes into the Onlyboxes sandbox instead of calling market inject', async () => {
+    vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
+
+    const { credsRouter } = await import('./creds');
+    const caller = credsRouter.createCaller({ serverDB: {}, userId: 'user-1' } as any);
+
+    const result = await caller.inject({ keys: ['Openrouter'], topicId: 'topic-1' });
+
+    expect(mockInjectCredsIntoOnlyboxesSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ keys: ['Openrouter'], workspaceId: undefined }),
+    );
+    expect(mockPersonalCredsInject).not.toHaveBeenCalled();
+    expect(result.credentials?.env).toEqual({ OPENROUTER_API_KEY: 'sk******ca' });
+  });
+
+  it('still calls market inject when the provider is not Onlyboxes', async () => {
+    vi.mocked(getSandboxProviderKind).mockReturnValue('market');
+
+    const { credsRouter } = await import('./creds');
+    const caller = credsRouter.createCaller({ serverDB: {}, userId: 'user-1' } as any);
+
+    await caller.inject({ keys: ['Openrouter'], topicId: 'topic-1' });
+
+    expect(mockPersonalCredsInject).toHaveBeenCalledWith({
+      keys: ['Openrouter'],
+      sandbox: true,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+    expect(mockInjectCredsIntoOnlyboxesSandbox).not.toHaveBeenCalled();
   });
 });

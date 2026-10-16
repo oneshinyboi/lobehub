@@ -4,6 +4,7 @@ import debug from 'debug';
 
 import { UserModel } from '@/database/models/user';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
+import { injectCredsIntoOnlyboxesSandbox } from '@/server/services/creds/onlyboxesInjection';
 import { MarketService } from '@/server/services/market';
 import {
   createSandboxService,
@@ -11,7 +12,6 @@ import {
   resolveSandboxSessionConfig,
   type SandboxService,
 } from '@/server/services/sandbox';
-import { maskCredentialEnv } from '@/server/services/sandbox/credentials';
 
 import { resolveContentWorkspaceId } from './resolveWorkspaceScope';
 import { type ServerRuntimeRegistration } from './types';
@@ -180,12 +180,10 @@ export class ServerCredsService implements ICredsService {
   }
 
   /**
-   * The Onlyboxes path. Market still resolves and decrypts the credentials (the
-   * credential store lives there), but it must NOT perform the sandbox write —
-   * this deployment's sandbox is the Onlyboxes one, which only this process can
-   * reach. So Market is asked to resolve without a sandbox write, and this
-   * method writes the real values into the Onlyboxes sandbox itself, returning
-   * only a masked map for the model.
+   * The Onlyboxes path. Market resolves and decrypts the credentials (the store
+   * lives there), but never writes them — that is this process's job, since the
+   * sandbox is the Onlyboxes one. Delegates to the shared helper so the tRPC
+   * `creds.inject` route (the desktop client's path) behaves identically.
    */
   private async injectCredsIntoOnlyboxesSandbox(params: {
     keys: string[];
@@ -205,58 +203,12 @@ export class ServerCredsService implements ICredsService {
       throw new Error('Sandbox credential writer is not configured');
     }
 
-    // Market's `inject` endpoint never returns the real values — it only ever
-    // emits a masked preview, because when it is asked to inject (`sandbox:
-    // true`) it writes the plaintext into ITS OWN sandbox and nothing needs to
-    // leave the response. This deployment's sandbox is the Onlyboxes one, so the
-    // plaintext must be resolved here instead: `creds.get(decrypt: true)` is the
-    // one Market read that returns real values, and it does so for KV creds.
-    const accessor = this.credsAccessor();
-    const list = await accessor.list();
-    const byKey = new Map((list.data ?? []).map((cred) => [cred.key, cred]));
-
-    const env: Record<string, string> = {};
-    const notFound: string[] = [];
-    const unsupportedInSandbox: string[] = [];
-
-    for (const key of params.keys) {
-      const cred = byKey.get(key);
-      if (!cred) {
-        notFound.push(key);
-        continue;
-      }
-
-      if (cred.type !== 'kv-env') {
-        // kv-header is never sandbox-injectable, and oauth/file carry no
-        // decryptable plaintext, so none of them can be written into a sandbox
-        // this process owns.
-        unsupportedInSandbox.push(key);
-        continue;
-      }
-
-      const full = (await accessor.get(cred.id, { decrypt: true })) as {
-        plaintext?: Record<string, string>;
-      };
-      Object.assign(env, full.plaintext ?? {});
-    }
-
-    if (Object.keys(env).length > 0) {
-      await this.sandboxService.writeCredentials({ env });
-    }
-
-    log(
-      'injectCreds (onlyboxes) done: written=%d notFound=%d unsupported=%d',
-      Object.keys(env).length,
-      notFound.length,
-      unsupportedInSandbox.length,
-    );
-
-    return {
-      credentials: { env: maskCredentialEnv(env), files: [] },
-      notFound,
-      success: notFound.length === 0,
-      unsupportedInSandbox,
-    };
+    return injectCredsIntoOnlyboxesSandbox({
+      keys: params.keys,
+      marketService: this.marketService,
+      sandboxService: this.sandboxService,
+      workspaceId: this.workspaceId,
+    });
   }
 
   async listCreds(): Promise<{
