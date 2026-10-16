@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCredentialsWriteCommand,
+  credentialFilePath,
   maskCredentialEnv,
   maskCredentialValue,
 } from '@/server/services/sandbox/credentials';
@@ -32,11 +33,16 @@ describe('maskCredentialEnv', () => {
   });
 });
 
+describe('credentialFilePath', () => {
+  it('sanitizes the key and filename and uses the documented directory', () => {
+    expect(credentialFilePath('my key', 'a b/c.txt')).toBe('~/.creds/files/my-key/a-b-c.txt');
+  });
+});
+
 describe('buildCredentialsWriteCommand', () => {
   it('writes real exports to session_env and a masked listing to env', () => {
     const command = buildCredentialsWriteCommand({
-      DC_CLI_TOKEN: 'sk-super-secret',
-      SHORT: 'abc',
+      env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
     });
 
     const realFile = base64(`export DC_CLI_TOKEN='sk-super-secret'\nexport SHORT='abc'\n`);
@@ -54,13 +60,29 @@ describe('buildCredentialsWriteCommand', () => {
     );
   });
 
-  it('encodes the file body so a value carrying quotes cannot reach the shell', () => {
-    const command = buildCredentialsWriteCommand({ TOKEN: "it's secret" });
+  it('encodes env bodies so a value carrying quotes cannot reach the shell', () => {
+    const command = buildCredentialsWriteCommand({ env: { TOKEN: "it's secret" } });
 
-    // The real file line survives single-quote escaping within the base64 body.
     expect(command).toContain(base64(`export TOKEN='it'\\''s secret'\n`));
-    // The value itself never appears raw in the command.
     expect(command).not.toContain('secret');
+  });
+
+  it('writes file creds by base64 and exports their path env var unquoted so `~` expands', () => {
+    const command = buildCredentialsWriteCommand({
+      files: [
+        { contentBase64: base64('hello'), envName: 'K_PATH', path: '~/.creds/files/k/f.txt' },
+      ],
+    });
+
+    expect(command).toContain(
+      `printf '%s' '${base64('hello')}' | base64 -d > ~/.creds/files/k/f.txt`,
+    );
+    expect(command).toContain('chmod 600 ~/.creds/files/k/f.txt');
+    // Unquoted `~` (tilde-expanded by the shell when session_env is sourced).
+    expect(command).toContain(
+      `'${base64(`export K_PATH=~/.creds/files/k/f.txt\n`)}' | base64 -d > ~/.creds/session_env`,
+    );
+    expect(command).toContain(base64(`# FILE ~/.creds/files/k/f.txt\n`));
   });
 
   it('produces nothing when there is nothing to inject', () => {

@@ -648,6 +648,33 @@ describe('OnlyboxesSandboxProvider', () => {
       expect(body.command).not.toContain('sk-super-secret');
     });
 
+    it('writes credential files into the documented directory', async () => {
+      const fetchMock = stubFetch({ exit_code: 0, session_id: 'lobe-user-1-topic-1' });
+
+      const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+      const provider = new OnlyboxesSandboxProvider({
+        marketService: {} as MarketService,
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      await provider.writeCredentials({
+        files: [
+          {
+            contentBase64: Buffer.from('hello').toString('base64'),
+            envName: 'K_PATH',
+            path: '~/.creds/files/k/f.txt',
+          },
+        ],
+      });
+
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as {
+        command: string;
+      };
+      expect(body.command).toContain('base64 -d > ~/.creds/files/k/f.txt');
+      expect(body.command).toContain('chmod 600 ~/.creds/files/k/f.txt');
+    });
+
     it('fails when the sandbox cannot write the credential files', async () => {
       stubFetch({ exit_code: 1, session_id: 'lobe-user-1-topic-1', stderr: 'read-only fs' });
 

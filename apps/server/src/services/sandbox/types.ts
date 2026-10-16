@@ -113,7 +113,18 @@ export interface SandboxProvider extends Pick<ISandboxService, 'callTool'> {
 
 export interface SandboxCredentialWriteRequest {
   /** Decrypted environment variables to make available to later commands. */
-  env: Record<string, string>;
+  env?: Record<string, string>;
+  /** Decrypted files to write into the sandbox. */
+  files?: SandboxCredentialFile[];
+}
+
+export interface SandboxCredentialFile {
+  /** File body, base64-encoded and decoded inside the sandbox. */
+  contentBase64: string;
+  /** Environment variable, if any, to point at the written path. */
+  envName?: string;
+  /** Destination path inside the sandbox (may start with `~`). */
+  path: string;
 }
 
 export interface SandboxService extends ISandboxService {

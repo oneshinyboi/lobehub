@@ -233,8 +233,8 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
    * command itself carries the plaintext values, so it is never logged; only the
    * masked reference listing is written for the model to read.
    */
-  async writeCredentials({ env }: SandboxCredentialWriteRequest): Promise<void> {
-    const command = buildCredentialsWriteCommand(env);
+  async writeCredentials({ env, files }: SandboxCredentialWriteRequest): Promise<void> {
+    const command = buildCredentialsWriteCommand({ env, files });
     if (!command) return;
 
     const terminal = await this.execTerminal(command, DEFAULT_TIMEOUT_MS);

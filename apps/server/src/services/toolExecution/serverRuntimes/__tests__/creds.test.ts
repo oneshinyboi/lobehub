@@ -210,6 +210,7 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     expect(get).toHaveBeenCalledWith(14346, { decrypt: true });
     expect(writer.writeCredentials).toHaveBeenCalledWith({
       env: { OPENROUTER_API_KEY: 'sk-or-real-key', OPENROUTER_MANAGEMENT_KEY: 'sk-or-mgmt' },
+      files: [],
     });
     // The model never sees the real values.
     expect(result.credentials?.env).toEqual({
@@ -242,12 +243,11 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     expect(writer.writeCredentials).not.toHaveBeenCalled();
   });
 
-  it('marks non-KV creds unsupported in the sandbox and never decrypts them', async () => {
+  it('marks non-KV, non-file creds unsupported in the sandbox and never decrypts them', async () => {
     const list = vi.fn().mockResolvedValue({
       data: [
         { id: 1, key: 'gh', type: 'oauth' },
         { id: 2, key: 'hdr', type: 'kv-header' },
-        { id: 3, key: 'cert', type: 'file' },
       ],
     });
     const get = vi.fn();
@@ -260,7 +260,7 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     );
 
     const result = await service.injectCreds({
-      keys: ['gh', 'hdr', 'cert'],
+      keys: ['gh', 'hdr'],
       sandbox: true,
       topicId: 't',
       userId: 'u',
@@ -268,7 +268,7 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
 
     expect(get).not.toHaveBeenCalled();
     expect(writer.writeCredentials).not.toHaveBeenCalled();
-    expect(result.unsupportedInSandbox).toEqual(['gh', 'hdr', 'cert']);
+    expect(result.unsupportedInSandbox).toEqual(['gh', 'hdr']);
   });
 
   it('refuses a share-visitor run before touching market or the sandbox', async () => {
@@ -332,6 +332,7 @@ describe('credsRuntime.factory (onlyboxes)', () => {
     );
     expect(writeCredentials).toHaveBeenCalledWith({
       env: { OPENROUTER_API_KEY: 'sk-or-real-key' },
+      files: [],
     });
     expect(result.state.credentials.env).toEqual({ OPENROUTER_API_KEY: 'sk******ey' });
   });

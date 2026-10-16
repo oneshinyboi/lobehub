@@ -392,6 +392,8 @@ export const credsRouter = router({
             keys: input.keys,
             marketService: ctx.marketService,
             sandboxService,
+            topicId: input.topicId,
+            userId,
             workspaceId: ctx.workspaceId ?? undefined,
           });
           log('inject (onlyboxes) success: notFound=%d', result.notFound.length);

@@ -207,6 +207,8 @@ export class ServerCredsService implements ICredsService {
       keys: params.keys,
       marketService: this.marketService,
       sandboxService: this.sandboxService,
+      topicId: params.topicId,
+      userId: params.userId,
       workspaceId: this.workspaceId,
     });
   }
