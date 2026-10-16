@@ -205,32 +205,58 @@ export class ServerCredsService implements ICredsService {
       throw new Error('Sandbox credential writer is not configured');
     }
 
-    const resolved = await this.marketService.market.creds.inject({
-      keys: params.keys,
-      sandbox: false,
-      topicId: params.topicId,
-      userId: params.userId,
-    });
+    // Market's `inject` endpoint never returns the real values — it only ever
+    // emits a masked preview, because when it is asked to inject (`sandbox:
+    // true`) it writes the plaintext into ITS OWN sandbox and nothing needs to
+    // leave the response. This deployment's sandbox is the Onlyboxes one, so the
+    // plaintext must be resolved here instead: `creds.get(decrypt: true)` is the
+    // one Market read that returns real values, and it does so for KV creds.
+    const accessor = this.credsAccessor();
+    const list = await accessor.list();
+    const byKey = new Map((list.data ?? []).map((cred) => [cred.key, cred]));
 
-    // `sandbox: false` asks Market to resolve/decrypt/classify without performing
-    // its own sandbox write, so `credentials.env` carries the real values this
-    // method writes below. (With `sandbox: true` Market writes them itself and
-    // masks the response — the two behaviours must not be mixed.)
-    const env = resolved.credentials?.env ?? {};
+    const env: Record<string, string> = {};
+    const notFound: string[] = [];
+    const unsupportedInSandbox: string[] = [];
+
+    for (const key of params.keys) {
+      const cred = byKey.get(key);
+      if (!cred) {
+        notFound.push(key);
+        continue;
+      }
+
+      if (cred.type !== 'kv-env') {
+        // kv-header is never sandbox-injectable, and oauth/file carry no
+        // decryptable plaintext, so none of them can be written into a sandbox
+        // this process owns.
+        unsupportedInSandbox.push(key);
+        continue;
+      }
+
+      const full = (await accessor.get(cred.id, { decrypt: true })) as {
+        plaintext?: Record<string, string>;
+      };
+      Object.assign(env, full.plaintext ?? {});
+    }
 
     if (Object.keys(env).length > 0) {
       await this.sandboxService.writeCredentials({ env });
     }
 
-    log('injectCreds (onlyboxes) success: notFound=%d', resolved.notFound?.length || 0);
+    log(
+      'injectCreds (onlyboxes) done: written=%d notFound=%d unsupported=%d',
+      Object.keys(env).length,
+      notFound.length,
+      unsupportedInSandbox.length,
+    );
 
     return {
-      ...resolved,
-      credentials: {
-        ...resolved.credentials,
-        env: maskCredentialEnv(env),
-      },
-    } as any;
+      credentials: { env: maskCredentialEnv(env), files: [] },
+      notFound,
+      success: notFound.length === 0,
+      unsupportedInSandbox,
+    };
   }
 
   async listCreds(): Promise<{

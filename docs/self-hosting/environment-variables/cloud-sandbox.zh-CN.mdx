@@ -137,8 +137,9 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
 
 ## Onlyboxes 凭证注入
 
-`injectCredsToSandbox` 在 Onlyboxes 上的行为与 Market 一致：用户凭证仍由 Market 解析并解密（因此需要配置并可访问 `MARKET_*`），随后由 LobeHub 自身写入 Onlyboxes 沙箱 ——Market 不会写入它并不拥有的沙箱。
+`injectCredsToSandbox` 在 Onlyboxes 上的行为与 Market 一致：LobeHub 通过 Market 解析凭证（需配置并可访问 `MARKET_*`），随后由 LobeHub 自身写入 Onlyboxes 沙箱 ——Market 不会写入它并不拥有的沙箱。
 
+- Market 的 `inject` 接口只会返回**脱敏**预览，因此 LobeHub 改用 `creds.get(decrypt: true)` 逐条解密，并把真实值写入沙箱。
 - 真实 `export` 行写入 `~/.creds/session_env`（`chmod 600`），provider 会在每条 `runCommand`/`execScript`/ 文件操作命令前 source 该文件，因此后续命令都能拿到注入的凭证。
 - `~/.creds/env` 保存供模型读取的脱敏键名清单；真实值不会出现在返回给模型的内容中。
-- `kv-header` 类型凭证在沙箱中仍不受支持，与 Market 一致。
+- 沙箱内支持 `kv-env`；`kv-header`、`oauth`、`file` 没有可解密的值，会被标记为沙箱内不支持。

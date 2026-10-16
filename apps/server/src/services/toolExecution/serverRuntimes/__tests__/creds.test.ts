@@ -171,8 +171,8 @@ describe('ServerCredsService.injectCreds', () => {
 });
 
 describe('ServerCredsService.injectCreds (onlyboxes)', () => {
-  const buildMarketService = (inject = vi.fn()) =>
-    ({ market: { creds: { inject } } }) as unknown as MarketService;
+  const buildMarketService = (creds: Record<string, unknown>) =>
+    ({ market: { creds } }) as unknown as MarketService;
 
   const buildWriter = () => ({ writeCredentials: vi.fn(async () => {}) });
 
@@ -181,72 +181,101 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
   });
 
-  it('resolves creds without a market sandbox write, writes them into the sandbox, and returns a masked env', async () => {
-    const inject = vi.fn().mockResolvedValue({
-      credentials: {
-        env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
-        files: [],
-        headers: {},
-      },
-      notFound: [],
-      success: true,
-      unsupportedInSandbox: [],
+  // Market's `inject` only ever returns MASKED values (it writes the real ones
+  // into its own sandbox). The only decrypting read is `creds.get(decrypt:true)`,
+  // so the Onlyboxes path must resolve plaintext itself and hand it to the
+  // sandbox writer — never trust `inject`'s masked preview.
+  it('decrypts KV creds, writes the real values into the sandbox, and returns a masked env', async () => {
+    const list = vi.fn().mockResolvedValue({
+      data: [{ id: 14346, key: 'Openrouter', type: 'kv-env' }],
+    });
+    const get = vi.fn().mockResolvedValue({
+      plaintext: { OPENROUTER_API_KEY: 'sk-or-real-key', OPENROUTER_MANAGEMENT_KEY: 'sk-or-mgmt' },
     });
     const writer = buildWriter();
     const service = new ServerCredsService(
-      buildMarketService(inject),
+      buildMarketService({ get, list }),
       undefined,
       false,
       writer as never,
     );
 
     const result = await service.injectCreds({
-      keys: ['dc-cli-token'],
+      keys: ['Openrouter'],
       sandbox: true,
       topicId: 'topic-1',
       userId: 'user-1',
     });
 
-    // Market is asked to resolve/decrypt only — never to write the sandbox.
-    expect(inject).toHaveBeenCalledWith({
-      keys: ['dc-cli-token'],
-      sandbox: false,
-      topicId: 'topic-1',
-      userId: 'user-1',
-    });
+    expect(get).toHaveBeenCalledWith(14346, { decrypt: true });
     expect(writer.writeCredentials).toHaveBeenCalledWith({
-      env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
+      env: { OPENROUTER_API_KEY: 'sk-or-real-key', OPENROUTER_MANAGEMENT_KEY: 'sk-or-mgmt' },
     });
     // The model never sees the real values.
-    expect(result.credentials?.env).toEqual({ DC_CLI_TOKEN: 'sk******et', SHORT: '****' });
+    expect(result.credentials?.env).toEqual({
+      OPENROUTER_API_KEY: 'sk******ey',
+      OPENROUTER_MANAGEMENT_KEY: 'sk******mt',
+    });
     expect(result.success).toBe(true);
   });
 
-  it('skips the sandbox write when market resolved nothing', async () => {
-    const inject = vi.fn().mockResolvedValue({
-      credentials: { env: {}, files: [], headers: {} },
-      notFound: ['missing'],
-      success: false,
-      unsupportedInSandbox: [],
-    });
+  it('reports keys missing from the credential store and skips the write', async () => {
+    const list = vi.fn().mockResolvedValue({ data: [] });
+    const get = vi.fn();
     const writer = buildWriter();
     const service = new ServerCredsService(
-      buildMarketService(inject),
+      buildMarketService({ get, list }),
       undefined,
       false,
       writer as never,
     );
 
-    await service.injectCreds({ keys: ['missing'], sandbox: true, topicId: 't', userId: 'u' });
+    const result = await service.injectCreds({
+      keys: ['missing'],
+      sandbox: true,
+      topicId: 't',
+      userId: 'u',
+    });
 
+    expect(result.notFound).toEqual(['missing']);
+    expect(get).not.toHaveBeenCalled();
     expect(writer.writeCredentials).not.toHaveBeenCalled();
   });
 
-  it('refuses a share-visitor run before touching market or the sandbox', async () => {
-    const inject = vi.fn();
+  it('marks non-KV creds unsupported in the sandbox and never decrypts them', async () => {
+    const list = vi.fn().mockResolvedValue({
+      data: [
+        { id: 1, key: 'gh', type: 'oauth' },
+        { id: 2, key: 'hdr', type: 'kv-header' },
+        { id: 3, key: 'cert', type: 'file' },
+      ],
+    });
+    const get = vi.fn();
     const writer = buildWriter();
     const service = new ServerCredsService(
-      buildMarketService(inject),
+      buildMarketService({ get, list }),
+      undefined,
+      false,
+      writer as never,
+    );
+
+    const result = await service.injectCreds({
+      keys: ['gh', 'hdr', 'cert'],
+      sandbox: true,
+      topicId: 't',
+      userId: 'u',
+    });
+
+    expect(get).not.toHaveBeenCalled();
+    expect(writer.writeCredentials).not.toHaveBeenCalled();
+    expect(result.unsupportedInSandbox).toEqual(['gh', 'hdr', 'cert']);
+  });
+
+  it('refuses a share-visitor run before touching market or the sandbox', async () => {
+    const list = vi.fn();
+    const writer = buildWriter();
+    const service = new ServerCredsService(
+      buildMarketService({ list }),
       undefined,
       true,
       writer as never,
@@ -255,17 +284,13 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     await expect(
       service.injectCreds({ keys: ['x'], sandbox: true, topicId: 't', userId: 'u' }),
     ).rejects.toThrow('unavailable in shared conversations');
-    expect(inject).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
     expect(writer.writeCredentials).not.toHaveBeenCalled();
   });
 
   it('throws when no sandbox writer is wired for the onlyboxes provider', async () => {
-    const inject = vi.fn().mockResolvedValue({
-      credentials: { env: { A: 'b' }, files: [], headers: {} },
-      notFound: [],
-      success: true,
-    });
-    const service = new ServerCredsService(buildMarketService(inject), undefined, false);
+    const list = vi.fn();
+    const service = new ServerCredsService(buildMarketService({ list }), undefined, false);
 
     await expect(
       service.injectCreds({ keys: ['a'], sandbox: true, topicId: 't', userId: 'u' }),
@@ -281,17 +306,16 @@ describe('credsRuntime.factory (onlyboxes)', () => {
     vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
   });
 
-  it('wires a sandbox service into the creds service and writes resolved creds', async () => {
+  it('wires a sandbox service into the creds service and writes decrypted creds', async () => {
     const writeCredentials = vi.fn(async () => {});
     vi.mocked(createSandboxService).mockReturnValue({ writeCredentials } as never);
 
-    const inject = vi.fn().mockResolvedValue({
-      credentials: { env: { DC_CLI_TOKEN: 'sk-super-secret' }, files: [], headers: {} },
-      notFound: [],
-      success: true,
+    const list = vi.fn().mockResolvedValue({
+      data: [{ id: 1, key: 'Openrouter', type: 'kv-env' }],
     });
+    const get = vi.fn().mockResolvedValue({ plaintext: { OPENROUTER_API_KEY: 'sk-or-real-key' } });
     vi.mocked(MarketService).mockImplementation(function () {
-      return { market: { creds: { inject } } } as never;
+      return { market: { creds: { get, list } } } as never;
     });
 
     const runtime = await credsRuntime.factory({
@@ -301,12 +325,14 @@ describe('credsRuntime.factory (onlyboxes)', () => {
       userId: 'user-1',
     });
 
-    const result = await (runtime as any).injectCredsToSandbox({ keys: ['dc-cli-token'] });
+    const result = await (runtime as any).injectCredsToSandbox({ keys: ['Openrouter'] });
 
     expect(createSandboxService).toHaveBeenCalledWith(
       expect.objectContaining({ topicId: 'topic-1', userId: 'user-1' }),
     );
-    expect(writeCredentials).toHaveBeenCalledWith({ env: { DC_CLI_TOKEN: 'sk-super-secret' } });
-    expect(result.state.credentials.env).toEqual({ DC_CLI_TOKEN: 'sk******et' });
+    expect(writeCredentials).toHaveBeenCalledWith({
+      env: { OPENROUTER_API_KEY: 'sk-or-real-key' },
+    });
+    expect(result.state.credentials.env).toEqual({ OPENROUTER_API_KEY: 'sk******ey' });
   });
 });

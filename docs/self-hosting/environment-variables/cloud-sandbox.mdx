@@ -139,8 +139,9 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
 
 ## Onlyboxes Credential Injection
 
-`injectCredsToSandbox` works the same way on Onlyboxes as it does on Market: the user's credentials are resolved and decrypted by Market (so `MARKET_*` must be configured and reachable), and then written into the Onlyboxes sandbox by LobeHub itself — Market never writes into a sandbox it does not own.
+`injectCredsToSandbox` puts credentials into the sandbox on Onlyboxes the same way it does on Market: LobeHub resolves the credential through Market (`MARKET_*` must be configured and reachable) and then writes it into the sandbox itself — Market never writes into a sandbox it does not own.
 
+- Market's `inject` endpoint only returns a **masked** preview, so LobeHub decrypts each credential with `creds.get(decrypt: true)` instead and writes the real values itself.
 - The real `export` lines land in `~/.creds/session_env` (`chmod 600`), which the provider sources before every `runCommand`/`execScript`/file-operation command, so injected credentials are available to later commands.
 - `~/.creds/env` holds a masked, reference-only listing of the injected keys for the model to read; the real values never leave the server response.
-- `kv-header` credentials remain unsupported in a sandbox, exactly as on Market.
+- Supported in a sandbox: `kv-env`. `kv-header`, `oauth`, and `file` credentials have no decryptable value, so they are reported as not supported in the sandbox.
