@@ -144,3 +144,9 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
 - `~/.creds/env` 保存供模型读取的脱敏键名清单；真实值不会出现在返回给模型的内容中。
 - 沙箱内支持 `kv-env` 与 `file`；`kv-header` 在沙箱中无意义，`oauth` 没有可解密的值，二者会被标记为沙箱内不支持。
 - `file` 凭证通过 Market 的预签名 URL 拉取，解压到 `~/.creds/files/<key>/<filename>`（`chmod 600`）；若凭证声明了路径环境变量，则会把该变量指向写入的路径。
+
+<Callout type={'warning'}>
+  **已知限制：`oauth` 凭证在 Onlyboxes 上不会被注入。** Market 仅在它自己的沙箱内解析 oauth，
+  且 `inject` 响应中的 token 是脱敏的，目前没有能让 LobeHub 拿到明文 OAuth token 的 Market 读取接口。
+  因此 `injectCredsToSandbox` 请求 `oauth` 凭证时会报告为沙箱内不支持；`kv-env` 与 `file` 凭证可正常使用。
+</Callout>

@@ -146,3 +146,11 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
 - `~/.creds/env` holds a masked, reference-only listing of the injected keys for the model to read; the real values never leave the server response.
 - Supported in a sandbox: `kv-env` and `file`. `kv-header` has no sandbox meaning, and `oauth` carries no decryptable value, so both are reported as not supported in the sandbox.
 - `file` credentials are fetched through Market's presigned URL and extracted to `~/.creds/files/<key>/<filename>` (`chmod 600`); when the credential declares a path environment variable, that variable is set to the written path.
+
+<Callout type={'warning'}>
+  **Known limitation: `oauth` credentials are not injected on Onlyboxes.** Market resolves them
+  only inside its own sandbox, and its `inject` response masks the token, so there is currently no
+  Market read that yields a plaintext OAuth token for LobeHub to write. An `oauth` credential
+  requested by `injectCredsToSandbox` is reported as not supported in the sandbox. `kv-env` and
+  `file` credentials work.
+</Callout>
