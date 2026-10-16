@@ -8,7 +8,9 @@ import { sha256 } from 'js-sha256';
 import { appEnv } from '@/envs/app';
 import { sandboxEnv } from '@/envs/sandbox';
 
+import { buildCredentialsWriteCommand } from '../credentials';
 import type {
+  SandboxCredentialWriteRequest,
   SandboxProvider,
   SandboxProviderCapabilities,
   SandboxProviderFileExportRequest,
@@ -25,6 +27,14 @@ const DEFAULT_JIT_TTL_SEC = 1800;
 const JIT_TOKEN_PREFIX = 'obx_jit_v1.';
 const WRITE_FILE_CHUNK_BYTES = 48 * 1024;
 const SKILL_ARCHIVE_CACHE_DIR = '/tmp/lobe-skills';
+/**
+ * Prefix applied to every terminal command so credentials written by
+ * {@link OnlyboxesSandboxProvider.writeCredentials} are present in the shell.
+ * `set -a` auto-exports the sourced assignments; the file check keeps commands
+ * working before any credential has been injected.
+ */
+const CREDS_PRELUDE =
+  'if [ -f ~/.creds/session_env ]; then set -a; . ~/.creds/session_env; set +a; fi; ';
 
 interface OnlyboxesTaskResponse {
   error?: { code?: string; message?: string };
@@ -218,6 +228,26 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     }
   }
 
+  /**
+   * Write decrypted credentials into `~/.creds` on the Onlyboxes sandbox. The
+   * command itself carries the plaintext values, so it is never logged; only the
+   * masked reference listing is written for the model to read.
+   */
+  async writeCredentials({ env }: SandboxCredentialWriteRequest): Promise<void> {
+    const command = buildCredentialsWriteCommand(env);
+    if (!command) return;
+
+    const terminal = await this.execTerminal(command, DEFAULT_TIMEOUT_MS);
+
+    if (terminal.exit_code !== 0) {
+      throw new Error(
+        terminal.stderr ||
+          terminal.stdout ||
+          'Failed to write credentials into the Onlyboxes sandbox',
+      );
+    }
+  }
+
   private get sessionId() {
     const scope = `${this.options.userId}-${this.options.topicId}`;
     return `lobe-${scope.replaceAll(/[^\w.-]/g, '-')}`;
@@ -332,7 +362,7 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       const task = await this.submitTask(
         'terminalExec',
         {
-          command,
+          command: this.withCredsPrelude(command),
           create_if_missing: true,
           lease_ttl_sec: this.leaseTTLSec,
           session_id: this.sessionId,
@@ -621,7 +651,7 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
   private async execTerminal(command: string, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return this.request<TerminalExecResult>('/api/v1/commands/terminal', {
       body: JSON.stringify({
-        command,
+        command: this.withCredsPrelude(command),
         create_if_missing: true,
         lease_ttl_sec: this.leaseTTLSec,
         session_id: this.sessionId,
@@ -629,6 +659,11 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       }),
       method: 'POST',
     });
+  }
+
+  /** Every shell command runs through this so injected credentials are loaded. */
+  private withCredsPrelude(command: string) {
+    return `${CREDS_PRELUDE}${command}`;
   }
 
   private async ensureSession() {

@@ -134,3 +134,11 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
   文件导出仍会把沙箱内产物写入 LobeHub 配置的 S3 存储。如果用户需要下载沙箱生成的文件，请同时配置 S3
   相关环境变量。
 </Callout>
+
+## Onlyboxes 凭证注入
+
+`injectCredsToSandbox` 在 Onlyboxes 上的行为与 Market 一致：用户凭证仍由 Market 解析并解密（因此需要配置并可访问 `MARKET_*`），随后由 LobeHub 自身写入 Onlyboxes 沙箱 ——Market 不会写入它并不拥有的沙箱。
+
+- 真实 `export` 行写入 `~/.creds/session_env`（`chmod 600`），provider 会在每条 `runCommand`/`execScript`/ 文件操作命令前 source 该文件，因此后续命令都能拿到注入的凭证。
+- `~/.creds/env` 保存供模型读取的脱敏键名清单；真实值不会出现在返回给模型的内容中。
+- `kv-header` 类型凭证在沙箱中仍不受支持，与 Market 一致。

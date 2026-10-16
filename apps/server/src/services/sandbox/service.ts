@@ -15,6 +15,7 @@ import {
 } from './bootstrap';
 import type {
   SandboxCommandResult,
+  SandboxCredentialWriteRequest,
   SandboxProvider,
   SandboxProviderCapabilities,
   SandboxProviderKind,
@@ -100,6 +101,14 @@ export class SandboxMiddlewareService implements SandboxService {
     } catch (error) {
       log('Sandbox file init failed for topic %s: %O', topicId, error);
     }
+  }
+
+  async writeCredentials(request: SandboxCredentialWriteRequest): Promise<void> {
+    if (!this.provider.writeCredentials) {
+      throw new Error(`Sandbox provider "${this.kind}" does not support credential injection`);
+    }
+
+    await this.provider.writeCredentials(request);
   }
 
   async exportAndUploadFile(

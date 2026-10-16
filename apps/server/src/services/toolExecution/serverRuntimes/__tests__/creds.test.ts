@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MarketService } from '@/server/services/market';
+import { createSandboxService, getSandboxProviderKind } from '@/server/services/sandbox';
 
 import { type ToolExecutionContext } from '../../types';
 import { credsRuntime, ServerCredsService } from '../creds';
@@ -17,6 +18,12 @@ vi.mock('@/database/models/workspaceMember', () => ({
 
 vi.mock('@/server/services/market', () => ({
   MarketService: vi.fn(),
+}));
+
+vi.mock('@/server/services/sandbox', () => ({
+  createSandboxService: vi.fn(),
+  getSandboxProviderKind: vi.fn(() => 'market'),
+  resolveSandboxSessionConfig: vi.fn(async () => ({ claim: null, mode: 'ephemeral' })),
 }));
 
 describe('credsRuntime', () => {
@@ -160,5 +167,146 @@ describe('ServerCredsService.injectCreds', () => {
       userId: 'user-1',
     });
     expect(result).toBe(injectResult);
+  });
+});
+
+describe('ServerCredsService.injectCreds (onlyboxes)', () => {
+  const buildMarketService = (inject = vi.fn()) =>
+    ({ market: { creds: { inject } } }) as unknown as MarketService;
+
+  const buildWriter = () => ({ writeCredentials: vi.fn(async () => {}) });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
+  });
+
+  it('resolves creds without a market sandbox write, writes them into the sandbox, and returns a masked env', async () => {
+    const inject = vi.fn().mockResolvedValue({
+      credentials: {
+        env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
+        files: [],
+        headers: {},
+      },
+      notFound: [],
+      success: true,
+      unsupportedInSandbox: [],
+    });
+    const writer = buildWriter();
+    const service = new ServerCredsService(
+      buildMarketService(inject),
+      undefined,
+      false,
+      writer as never,
+    );
+
+    const result = await service.injectCreds({
+      keys: ['dc-cli-token'],
+      sandbox: true,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    // Market is asked to resolve/decrypt only — never to write the sandbox.
+    expect(inject).toHaveBeenCalledWith({
+      keys: ['dc-cli-token'],
+      sandbox: false,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+    expect(writer.writeCredentials).toHaveBeenCalledWith({
+      env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
+    });
+    // The model never sees the real values.
+    expect(result.credentials?.env).toEqual({ DC_CLI_TOKEN: 'sk******et', SHORT: '****' });
+    expect(result.success).toBe(true);
+  });
+
+  it('skips the sandbox write when market resolved nothing', async () => {
+    const inject = vi.fn().mockResolvedValue({
+      credentials: { env: {}, files: [], headers: {} },
+      notFound: ['missing'],
+      success: false,
+      unsupportedInSandbox: [],
+    });
+    const writer = buildWriter();
+    const service = new ServerCredsService(
+      buildMarketService(inject),
+      undefined,
+      false,
+      writer as never,
+    );
+
+    await service.injectCreds({ keys: ['missing'], sandbox: true, topicId: 't', userId: 'u' });
+
+    expect(writer.writeCredentials).not.toHaveBeenCalled();
+  });
+
+  it('refuses a share-visitor run before touching market or the sandbox', async () => {
+    const inject = vi.fn();
+    const writer = buildWriter();
+    const service = new ServerCredsService(
+      buildMarketService(inject),
+      undefined,
+      true,
+      writer as never,
+    );
+
+    await expect(
+      service.injectCreds({ keys: ['x'], sandbox: true, topicId: 't', userId: 'u' }),
+    ).rejects.toThrow('unavailable in shared conversations');
+    expect(inject).not.toHaveBeenCalled();
+    expect(writer.writeCredentials).not.toHaveBeenCalled();
+  });
+
+  it('throws when no sandbox writer is wired for the onlyboxes provider', async () => {
+    const inject = vi.fn().mockResolvedValue({
+      credentials: { env: { A: 'b' }, files: [], headers: {} },
+      notFound: [],
+      success: true,
+    });
+    const service = new ServerCredsService(buildMarketService(inject), undefined, false);
+
+    await expect(
+      service.injectCreds({ keys: ['a'], sandbox: true, topicId: 't', userId: 'u' }),
+    ).rejects.toThrow('Sandbox credential writer is not configured');
+  });
+});
+
+describe('credsRuntime.factory (onlyboxes)', () => {
+  const serverDB = {} as NonNullable<ToolExecutionContext['serverDB']>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
+  });
+
+  it('wires a sandbox service into the creds service and writes resolved creds', async () => {
+    const writeCredentials = vi.fn(async () => {});
+    vi.mocked(createSandboxService).mockReturnValue({ writeCredentials } as never);
+
+    const inject = vi.fn().mockResolvedValue({
+      credentials: { env: { DC_CLI_TOKEN: 'sk-super-secret' }, files: [], headers: {} },
+      notFound: [],
+      success: true,
+    });
+    vi.mocked(MarketService).mockImplementation(function () {
+      return { market: { creds: { inject } } } as never;
+    });
+
+    const runtime = await credsRuntime.factory({
+      serverDB,
+      toolManifestMap: {},
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    const result = await (runtime as any).injectCredsToSandbox({ keys: ['dc-cli-token'] });
+
+    expect(createSandboxService).toHaveBeenCalledWith(
+      expect.objectContaining({ topicId: 'topic-1', userId: 'user-1' }),
+    );
+    expect(writeCredentials).toHaveBeenCalledWith({ env: { DC_CLI_TOKEN: 'sk-super-secret' } });
+    expect(result.state.credentials.env).toEqual({ DC_CLI_TOKEN: 'sk******et' });
   });
 });

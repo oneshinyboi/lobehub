@@ -6,6 +6,7 @@ export { normalizeSandboxCommandResult, SandboxMiddlewareService } from './servi
 export type { SandboxSessionConfig } from './session';
 export { resolveSandboxSessionConfig } from './session';
 export type {
+  SandboxCredentialWriteRequest,
   SandboxFileExporter,
   SandboxProvider,
   SandboxProviderKind,

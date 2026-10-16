@@ -136,3 +136,11 @@ CONSOLE_JIT_SIGNING_KEY=onlyboxes-jit-signing-secret
   File export still writes the exported artifact to the configured LobeHub S3 storage. Configure the
   S3 environment variables when users need to download files generated inside the sandbox.
 </Callout>
+
+## Onlyboxes Credential Injection
+
+`injectCredsToSandbox` works the same way on Onlyboxes as it does on Market: the user's credentials are resolved and decrypted by Market (so `MARKET_*` must be configured and reachable), and then written into the Onlyboxes sandbox by LobeHub itself — Market never writes into a sandbox it does not own.
+
+- The real `export` lines land in `~/.creds/session_env` (`chmod 600`), which the provider sources before every `runCommand`/`execScript`/file-operation command, so injected credentials are available to later commands.
+- `~/.creds/env` holds a masked, reference-only listing of the injected keys for the model to read; the real values never leave the server response.
+- `kv-header` credentials remain unsupported in a sandbox, exactly as on Market.

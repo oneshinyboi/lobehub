@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MarketService } from '@/server/services/market';
 
+/** Guarded prelude the provider prepends to every terminal command. */
+const CREDS_PRELUDE =
+  'if [ -f ~/.creds/session_env ]; then set -a; . ~/.creds/session_env; set +a; fi; ';
+
 const decodeJITPayload = (authorization?: string) => {
   const token = authorization?.replace('Bearer ', '') || '';
   const [payload] = token.replace('obx_jit_v1.', '').split('.');
@@ -78,7 +82,7 @@ describe('OnlyboxesSandboxProvider', () => {
       'https://onlyboxes.example.com/api/v1/commands/terminal',
       expect.objectContaining({
         body: JSON.stringify({
-          command: 'echo ok',
+          command: `${CREDS_PRELUDE}echo ok`,
           create_if_missing: true,
           lease_ttl_sec: 120,
           session_id: 'lobe-user-1-topic-1',
@@ -169,6 +173,29 @@ describe('OnlyboxesSandboxProvider', () => {
       result: null,
       success: false,
     });
+  });
+
+  it('sources the injected credential file for background commands too', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ status: 'pending', task_id: 'task-1' }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await provider.callTool('runCommand', { background: true, command: 'sleep 10' });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as {
+      input: { command: string };
+    };
+    expect(body.input.command).toBe(`${CREDS_PRELUDE}sleep 10`);
   });
 
   it('treats running background command polls as successful output retrievals', async () => {
@@ -550,5 +577,103 @@ describe('OnlyboxesSandboxProvider', () => {
     expect(setupBody.command).toContain("curl -fsSL 'https://files.example.com/legacy.zip'");
     expect(setupBody.command).toContain('/legacy-skill/');
     expect(commandBody.command).toContain('/legacy-skill');
+  });
+
+  it('sources the injected credential file before file-operation commands too', async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          exit_code: 0,
+          session_id: 'lobe-user-1-topic-1',
+          stderr: '',
+          stdout: JSON.stringify({ files: [], totalCount: 0 }),
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await provider.callTool('listLocalFiles', { directoryPath: '/workspace' });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as {
+      command: string;
+    };
+    expect(body.command.startsWith(CREDS_PRELUDE)).toBe(true);
+  });
+
+  describe('writeCredentials', () => {
+    const stubFetch = (body: Record<string, unknown>, status = 200) => {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    };
+
+    it('writes real exports to session_env and a masked listing to env', async () => {
+      const fetchMock = stubFetch({ exit_code: 0, session_id: 'lobe-user-1-topic-1' });
+
+      const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+      const provider = new OnlyboxesSandboxProvider({
+        marketService: {} as MarketService,
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      await provider.writeCredentials({
+        env: { DC_CLI_TOKEN: 'sk-super-secret', SHORT: 'abc' },
+      });
+
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as {
+        command: string;
+      };
+      const realFile = Buffer.from(
+        `export DC_CLI_TOKEN='sk-super-secret'\nexport SHORT='abc'\n`,
+      ).toString('base64');
+      const maskedFile = Buffer.from(`# DC_CLI_TOKEN=sk******et\n# SHORT=****\n`).toString(
+        'base64',
+      );
+
+      expect(body.command).toContain(`${CREDS_PRELUDE}mkdir -p ~/.creds`);
+      expect(body.command).toContain(`'${realFile}' | base64 -d > ~/.creds/session_env`);
+      expect(body.command).toContain(`'${maskedFile}' | base64 -d > ~/.creds/env`);
+      expect(body.command).toContain('chmod 600 ~/.creds/session_env');
+      expect(body.command).toContain('chmod 600 ~/.creds/env');
+      // The real value never appears in the command (it is base64 in the body).
+      expect(body.command).not.toContain('sk-super-secret');
+    });
+
+    it('fails when the sandbox cannot write the credential files', async () => {
+      stubFetch({ exit_code: 1, session_id: 'lobe-user-1-topic-1', stderr: 'read-only fs' });
+
+      const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+      const provider = new OnlyboxesSandboxProvider({
+        marketService: {} as MarketService,
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      await expect(provider.writeCredentials({ env: { A: 'b' } })).rejects.toThrow('read-only fs');
+    });
+
+    it('does nothing when there are no credentials', async () => {
+      const fetchMock = stubFetch({ exit_code: 0, session_id: 'lobe-user-1-topic-1' });
+
+      const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+      const provider = new OnlyboxesSandboxProvider({
+        marketService: {} as MarketService,
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      await provider.writeCredentials({ env: {} });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });

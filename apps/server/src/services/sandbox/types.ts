@@ -102,11 +102,29 @@ export interface SandboxProvider extends Pick<ISandboxService, 'callTool'> {
   ) => Promise<SandboxProviderFileExportResult>;
 
   readonly kind: SandboxProviderKind;
+
+  /**
+   * Write decrypted credentials into the provider's own sandbox so its shell
+   * tools can use them. Optional: a provider whose sandbox receives credentials
+   * some other way (Market injects upstream) leaves this undefined.
+   */
+  writeCredentials?: (request: SandboxCredentialWriteRequest) => Promise<void>;
+}
+
+export interface SandboxCredentialWriteRequest {
+  /** Decrypted environment variables to make available to later commands. */
+  env: Record<string, string>;
 }
 
 export interface SandboxService extends ISandboxService {
   readonly capabilities: SandboxProviderCapabilities;
   readonly kind: SandboxProviderKind;
+
+  /**
+   * Persist credentials into the sandbox. Throws when the provider does not own
+   * its sandbox's credential files (see {@link SandboxProvider.writeCredentials}).
+   */
+  writeCredentials: (request: SandboxCredentialWriteRequest) => Promise<void>;
 }
 
 export interface SandboxFileExporter {

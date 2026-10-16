@@ -229,4 +229,62 @@ describe('SandboxMiddlewareService', () => {
     expect(fileService.getFileMetadata).not.toHaveBeenCalled();
     expect(fileService.createFileRecord).not.toHaveBeenCalled();
   });
+
+  it('delegates credential writes to a provider that implements them', async () => {
+    const { SandboxMiddlewareService: TestSandboxMiddlewareService } = await import('../service');
+    const writeCredentials = vi.fn(async () => {});
+    const provider = {
+      capabilities: {
+        backgroundCommands: true,
+        exportFile: true,
+        files: true,
+        languages: ['python'],
+        persistentSession: true,
+        shell: true,
+        skillScripts: true,
+      },
+      callTool: vi.fn(),
+      exportFileToUploadUrl: vi.fn(),
+      kind: 'onlyboxes',
+      writeCredentials,
+    } satisfies SandboxProvider;
+
+    const service = new TestSandboxMiddlewareService(provider, {
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await service.writeCredentials({ env: { A: 'b' } });
+
+    expect(writeCredentials).toHaveBeenCalledWith({ env: { A: 'b' } });
+  });
+
+  it('throws when the provider cannot write credentials', async () => {
+    const { SandboxMiddlewareService: TestSandboxMiddlewareService } = await import('../service');
+    const provider = {
+      capabilities: {
+        backgroundCommands: true,
+        exportFile: true,
+        files: true,
+        languages: ['python'],
+        persistentSession: true,
+        shell: true,
+        skillScripts: true,
+      },
+      callTool: vi.fn(),
+      exportFileToUploadUrl: vi.fn(),
+      kind: 'market',
+    } satisfies SandboxProvider;
+
+    const service = new TestSandboxMiddlewareService(provider, {
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await expect(service.writeCredentials({ env: { A: 'b' } })).rejects.toThrow(
+      'does not support credential injection',
+    );
+  });
 });

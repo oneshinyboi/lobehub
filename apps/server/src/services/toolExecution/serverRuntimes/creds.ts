@@ -5,7 +5,13 @@ import debug from 'debug';
 import { UserModel } from '@/database/models/user';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import { MarketService } from '@/server/services/market';
-import { resolveSandboxSessionConfig } from '@/server/services/sandbox';
+import {
+  createSandboxService,
+  getSandboxProviderKind,
+  resolveSandboxSessionConfig,
+  type SandboxService,
+} from '@/server/services/sandbox';
+import { maskCredentialEnv } from '@/server/services/sandbox/credentials';
 
 import { resolveContentWorkspaceId } from './resolveWorkspaceScope';
 import { type ServerRuntimeRegistration } from './types';
@@ -22,6 +28,13 @@ export class ServerCredsService implements ICredsService {
 
   private isShareVisitor: boolean;
 
+  /**
+   * The sandbox this run's credentials belong in, when the deployment owns that
+   * sandbox (Onlyboxes). Absent on the Market provider, where Market injects
+   * into its own sandbox and there is nothing for this process to write.
+   */
+  private sandboxService?: SandboxService;
+
   constructor(
     marketService: MarketService,
     workspaceId?: string,
@@ -35,10 +48,12 @@ export class ServerCredsService implements ICredsService {
      * the allowlist alone.
      */
     isShareVisitor = false,
+    sandboxService?: SandboxService,
   ) {
     this.marketService = marketService;
     this.workspaceId = workspaceId;
     this.isShareVisitor = isShareVisitor;
+    this.sandboxService = sandboxService;
   }
 
   /**
@@ -138,6 +153,10 @@ export class ServerCredsService implements ICredsService {
       );
     }
 
+    if (getSandboxProviderKind() === 'onlyboxes') {
+      return this.injectCredsIntoOnlyboxesSandbox(params);
+    }
+
     // Market's generic inject endpoint resolves organization credentials from
     // the workspaceId signed into this service's trusted-client token, and —
     // when `sandbox` is true (the default) — already writes the *real*
@@ -158,6 +177,60 @@ export class ServerCredsService implements ICredsService {
     log('injectCreds success: notFound=%d', result.notFound?.length || 0);
 
     return result as any;
+  }
+
+  /**
+   * The Onlyboxes path. Market still resolves and decrypts the credentials (the
+   * credential store lives there), but it must NOT perform the sandbox write —
+   * this deployment's sandbox is the Onlyboxes one, which only this process can
+   * reach. So Market is asked to resolve without a sandbox write, and this
+   * method writes the real values into the Onlyboxes sandbox itself, returning
+   * only a masked map for the model.
+   */
+  private async injectCredsIntoOnlyboxesSandbox(params: {
+    keys: string[];
+    sandbox?: boolean;
+    topicId: string;
+    userId: string;
+  }): Promise<{
+    credentials?: {
+      env?: Record<string, string>;
+      files?: Array<{ filename: string; key: string; path: string }>;
+    };
+    notFound?: string[];
+    success: boolean;
+    unsupportedInSandbox?: string[];
+  }> {
+    if (!this.sandboxService) {
+      throw new Error('Sandbox credential writer is not configured');
+    }
+
+    const resolved = await this.marketService.market.creds.inject({
+      keys: params.keys,
+      sandbox: false,
+      topicId: params.topicId,
+      userId: params.userId,
+    });
+
+    // `sandbox: false` asks Market to resolve/decrypt/classify without performing
+    // its own sandbox write, so `credentials.env` carries the real values this
+    // method writes below. (With `sandbox: true` Market writes them itself and
+    // masks the response — the two behaviours must not be mixed.)
+    const env = resolved.credentials?.env ?? {};
+
+    if (Object.keys(env).length > 0) {
+      await this.sandboxService.writeCredentials({ env });
+    }
+
+    log('injectCreds (onlyboxes) success: notFound=%d', resolved.notFound?.length || 0);
+
+    return {
+      ...resolved,
+      credentials: {
+        ...resolved.credentials,
+        env: maskCredentialEnv(env),
+      },
+    } as any;
   }
 
   async listCreds(): Promise<{
@@ -259,10 +332,31 @@ export const credsRuntime: ServerRuntimeRegistration = {
       },
     });
 
+    // Only the Onlyboxes provider needs a sandbox writer: Market injects into
+    // its own sandbox upstream, so building one there would be dead weight and
+    // an extra dependency on a provider this run will never touch. A run with no
+    // topicId cannot inject anyway — the runtime refuses before reaching the
+    // service — so it is left without a writer.
+    const sandboxService: SandboxService | undefined =
+      getSandboxProviderKind() === 'onlyboxes' && context.topicId
+        ? createSandboxService({
+            marketService,
+            sandboxCwd: sandbox.cwd,
+            sandboxInstanceId: sandbox.environment,
+            sandboxMode: sandbox.mode,
+            sandboxSpecification: sandbox.specification,
+            sandboxWorkingDir: sandbox.workingDir,
+            serverDB: context.serverDB,
+            topicId: context.topicId,
+            userId: context.userId,
+          })
+        : undefined;
+
     const credsService = new ServerCredsService(
       marketService,
       workspaceId,
       Boolean(context.agentShareVisitor),
+      sandboxService,
     );
 
     return new CredsExecutionRuntime(credsService, {
