@@ -599,5 +599,10 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
+  },
+  "pnpm": {
+    "overrides": {
+      "@standard-community/standard-openapi": "0.2.10"
+    }
   }
 }
