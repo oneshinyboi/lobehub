@@ -18,6 +18,7 @@ import {
   EthernetPort,
   FlaskConical,
   Gift,
+  HardDriveIcon,
   Info,
   KeyboardIcon,
   KeyIcon,
@@ -86,9 +87,6 @@ export const useCategory = () => {
   const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);
   const enableOAuthApps = useUserStore(labPreferSelectors.enableOAuthApps);
   const enableIntegrations = useUserStore(labPreferSelectors.enableIntegrations);
-  // Behind the same experiment that gates the persistent sandbox itself: a tab
-  // for environments nothing can run in would be a dead end.
-  const enablePersistentSandbox = useUserStore(labPreferSelectors.enablePersistentSandbox);
 
   const avatarUrl = useMemo(() => {
     if (!avatar) return undefined;
@@ -157,10 +155,20 @@ export const useCategory = () => {
         key: SettingsTabs.Devices,
         label: t('tab.devices'),
       },
-      enablePersistentSandbox && {
+      // Always there: a code environment is a definition, written down before
+      // anything runs it, and useful with or without a drive to run it on.
+      {
         icon: ContainerIcon,
         key: SettingsTabs.Environments,
         label: t('tab.environments'),
+      },
+      // The drives a cloud-sandbox run keeps files on, with their usage and
+      // the way to a plan. A self-hosted deployment has no drive service, so
+      // the tab would only ever lead to an empty page there.
+      enableBusinessFeatures && {
+        icon: HardDriveIcon,
+        key: SettingsTabs.Drive,
+        label: t('tab.drive'),
       },
       (enableBusinessFeatures || isDesktop) && {
         icon: BellIcon,
@@ -331,7 +339,6 @@ export const useCategory = () => {
     isDevMode,
     enableOAuthApps,
     enableIntegrations,
-    enablePersistentSandbox,
     avatarUrl,
     username,
   ]);

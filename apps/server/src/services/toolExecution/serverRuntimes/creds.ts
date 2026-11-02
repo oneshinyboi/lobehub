@@ -5,7 +5,7 @@ import debug from 'debug';
 import { UserModel } from '@/database/models/user';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import { injectCredsIntoOnlyboxesSandbox } from '@/server/services/creds/onlyboxesInjection';
-import { MarketService } from '@/server/services/market';
+import type { MarketService } from '@/server/services/market';
 import {
   createSandboxService,
   getSandboxProviderKind,
@@ -14,6 +14,7 @@ import {
 } from '@/server/services/sandbox';
 
 import { resolveContentWorkspaceId } from './resolveWorkspaceScope';
+import { createSandboxMarketService } from './sandboxMarket';
 import { type ServerRuntimeRegistration } from './types';
 
 const log = debug('lobe-server:creds-runtime');
@@ -287,14 +288,12 @@ export const credsRuntime: ServerRuntimeRegistration = {
       workspaceId,
     });
 
-    const marketService = new MarketService({
+    const marketService = createSandboxMarketService(
+      context,
       accessToken,
-      userInfo: {
-        sandboxStorage: sandbox.claim,
-        userId: context.userId,
-        workspaceId,
-      },
-    });
+      workspaceId,
+      sandbox.claim,
+    );
 
     // Only the Onlyboxes provider needs a sandbox writer: Market injects into
     // its own sandbox upstream, so building one there would be dead weight and
