@@ -4,6 +4,7 @@ import type {
   TaskAutomationMode,
   TaskInstructionSynthesis,
   TaskIntentAnalysis,
+  TaskListFilter,
   TaskStatus,
 } from '@lobechat/types';
 
@@ -29,6 +30,8 @@ class TaskService {
     automated?: boolean;
     /** Keep completed / canceled tasks only when closed within this window. */
     completedWithin?: TaskCompletedWindow;
+    /** The Tasks page filter, applied server-side before paging. */
+    filter?: TaskListFilter;
     /** Archived tasks are left out unless this is set. */
     includeArchived?: boolean;
     orderBy?: 'createdAt' | 'updatedAt';
@@ -49,7 +52,8 @@ class TaskService {
     automated?: boolean;
     completedWithin?: TaskCompletedWindow;
     excludeStatuses?: TaskStatus[];
-    groupBy?: 'assignee' | 'member' | 'priority';
+    filter?: TaskListFilter;
+    groupBy?: 'assignee' | 'label' | 'member' | 'priority';
     groups?: Array<{
       key: string;
       limit?: number;
@@ -57,6 +61,8 @@ class TaskService {
       statuses: string[];
     }>;
     includeArchived?: boolean;
+    /** The label group whose labels are the columns when `groupBy` is 'label'. */
+    labelGroupId?: string;
     parentTaskId?: string | null;
     projectId?: string;
     /** "My tasks" narrowing: assigned to the caller, or created by them. */
@@ -125,6 +131,8 @@ class TaskService {
     description?: string;
     editorData?: unknown;
     instruction: string;
+    /** Labels attached on creation; validated before the task is written. */
+    labelIds?: string[];
     name?: string;
     parentTaskId?: string;
     priority?: number;
@@ -173,6 +181,36 @@ class TaskService {
       scheduleTimezone?: string | null;
     },
   ) => lambdaClient.task.update.mutate({ id, ...data });
+
+  // ── Batch (list multi-select) ──
+  // One request per action for the whole selection; the server answers with a
+  // per-task outcome (`updated` / `skipped` / `failed`).
+
+  batchUpdate = async (params: {
+    assigneeAgentId?: string | null;
+    assigneeUserId?: string | null;
+    ids: string[];
+    priority?: number;
+  }) => lambdaClient.task.batchUpdate.mutate(params);
+
+  batchUpdateStatus = async (
+    ids: string[],
+    status: 'backlog' | 'canceled' | 'completed' | 'paused',
+  ) => lambdaClient.task.batchUpdateStatus.mutate({ ids, status });
+
+  batchArchive = async (ids: string[], archived: boolean) =>
+    lambdaClient.task.batchArchive.mutate({ archived, ids });
+
+  batchDelete = async (ids: string[]) => lambdaClient.task.batchDelete.mutate({ ids });
+
+  /** Undo of a batch status / field / archive change (the `reverts` it returned). */
+  batchRevert = async (
+    reverts: Parameters<typeof lambdaClient.task.batchRevert.mutate>[0]['reverts'],
+  ) => lambdaClient.task.batchRevert.mutate({ reverts });
+
+  /** Undo of a batch delete: restore the tasks from the recycle bin. */
+  batchRestoreDeleted = async (ids: string[]) =>
+    lambdaClient.task.batchRestoreDeleted.mutate({ ids });
 
   delete = async (id: string) => lambdaClient.task.delete.mutate({ id });
 

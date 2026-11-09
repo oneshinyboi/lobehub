@@ -24,13 +24,14 @@ type LabFeatureI18nKey =
   | 'goals'
   | 'heteroSessionImport'
   | 'imessage'
-  | 'inputMarkdown'
-  | 'integrations'
   | 'messageTextSelectionActions'
   | 'oauthApps'
   | 'projects'
   | 'selfLearning'
   | 'topicBugReport';
+
+/** Locale key stems that also carry a `features.${stem}.note` line */
+type LabFeatureNoteI18nKey = 'selfLearning';
 
 export interface LabFeatureItem {
   /**
@@ -44,6 +45,11 @@ export interface LabFeatureItem {
   flag: keyof typeof labPreferSelectors;
   /** Locale key stem in the `labs` namespace: `features.${i18nKey}.title|desc` */
   i18nKey: LabFeatureI18nKey;
+  /**
+   * Second description line for what the user must know before turning it on
+   * (e.g. extra usage cost): `features.${noteI18nKey}.note`
+   */
+  noteI18nKey?: LabFeatureNoteI18nKey;
   /** Extra untranslated English synonyms for the settings search index */
   searchKeywords: string[];
   stage: LabStage;
@@ -59,12 +65,6 @@ const ALL_LAB_FEATURES: LabFeatureItem[] = [
     stage: 'alpha',
   },
   {
-    flag: 'enableInputMarkdown',
-    i18nKey: 'inputMarkdown',
-    searchKeywords: ['markdown', 'input markdown'],
-    stage: 'beta',
-  },
-  {
     flag: 'enableMessageTextSelectionActions',
     i18nKey: 'messageTextSelectionActions',
     searchKeywords: ['text selection', 'quote'],
@@ -73,6 +73,7 @@ const ALL_LAB_FEATURES: LabFeatureItem[] = [
   {
     flag: 'enableSelfLearning',
     i18nKey: 'selfLearning',
+    noteI18nKey: 'selfLearning',
     searchKeywords: [
       'self-evolving',
       'self learning',
@@ -120,12 +121,6 @@ const ALL_LAB_FEATURES: LabFeatureItem[] = [
     i18nKey: 'oauthApps',
     searchKeywords: ['oauth', 'oauth apps'],
     stage: 'beta',
-  },
-  {
-    flag: 'enableIntegrations',
-    i18nKey: 'integrations',
-    searchKeywords: ['integrations', 'github', 'github app', 'pull request'],
-    stage: 'alpha',
   },
   {
     flag: 'enableArtifactDeployment',

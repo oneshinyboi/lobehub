@@ -120,6 +120,11 @@ const projectSidebarSections =
   (s: GlobalState): Record<string, boolean> | undefined =>
     projectId ? s.status.expandProjectSidebarSectionsByProject?.[projectId] : undefined;
 
+const projectOnboardingDismissed =
+  (projectId: string | undefined) =>
+  (s: GlobalState): boolean =>
+    Boolean(projectId && s.status.dismissedProjectOnboarding?.[projectId]);
+
 /** Whether the topic list owned by `ownerId` (agent / group / project) shows only my topics. */
 const topicOnlyMine =
   (ownerId: string | undefined) =>
@@ -154,6 +159,13 @@ const taskListViewOptions = (s: GlobalState) =>
     showSubTasks: false,
     subGroupBy: 'none',
   };
+
+const EMPTY_TASK_LIST_FILTERS: NonNullable<GlobalState['status']['taskListFilters']> = [];
+
+const taskListFilters = (s: GlobalState) => s.status.taskListFilters ?? EMPTY_TASK_LIST_FILTERS;
+
+const taskListFilter = (scope: string) => (s: GlobalState) =>
+  taskListFilters(s).find((entry) => entry.scope === scope)?.filter;
 
 const taskListViewMode = (s: GlobalState) => s.status.taskListViewMode ?? 'list';
 
@@ -573,9 +585,12 @@ export const systemStatusSelectors = {
   taskKanbanHiddenColumns,
   taskKanbanHiddenPanelCollapsed,
   taskListViewMode,
+  taskListFilter,
+  taskListFilters,
   taskListViewOptions,
   sidebarExpandedKeys,
   agentSidebarSections,
+  projectOnboardingDismissed,
   projectSidebarSections,
   sidebarItems,
   sessionGroupKeys,
