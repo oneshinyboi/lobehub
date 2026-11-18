@@ -48,6 +48,7 @@ const {
 const { mockInjectCredsIntoOnlyboxesSandbox } = vi.hoisted(() => ({
   mockInjectCredsIntoOnlyboxesSandbox: vi.fn(async () => ({
     credentials: { env: { OPENROUTER_API_KEY: 'sk******ca' }, files: [] },
+    envVarsByKey: { Openrouter: ['OPENROUTER_API_KEY'] },
     notFound: [],
     success: true,
     unsupportedInSandbox: [],
@@ -359,6 +360,7 @@ describe('credsRouter inject sandbox routing', () => {
     );
     expect(mockCredsInject).not.toHaveBeenCalled();
     expect(result.credentials?.env).toEqual({ OPENROUTER_API_KEY: 'sk******ca' });
+    expect(result.envVarsByKey).toEqual({ Openrouter: ['OPENROUTER_API_KEY'] });
   });
 
   it('still calls market inject when the provider is not Onlyboxes', async () => {

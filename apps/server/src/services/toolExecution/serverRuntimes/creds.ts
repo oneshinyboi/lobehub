@@ -256,6 +256,7 @@ export class ServerCredsService implements ICredsService {
       env?: Record<string, string>;
       files?: Array<{ filename: string; key: string; path: string }>;
     };
+    envVarsByKey?: Record<string, string[]>;
     notFound?: string[];
     success: boolean;
     unsupportedInSandbox?: string[];

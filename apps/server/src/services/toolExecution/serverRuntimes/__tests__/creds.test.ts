@@ -370,6 +370,11 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
       userId: 'user-1',
     });
 
+    // The onlyboxes path attributes env names per key at write time.
+    expect(result.envVarsByKey).toEqual({
+      Openrouter: ['OPENROUTER_API_KEY', 'OPENROUTER_MANAGEMENT_KEY'],
+    });
+
     expect(get).toHaveBeenCalledWith(14346, { decrypt: true });
     expect(writer.writeCredentials).toHaveBeenCalledWith({
       env: { OPENROUTER_API_KEY: 'sk-or-real-key', OPENROUTER_MANAGEMENT_KEY: 'sk-or-mgmt' },
