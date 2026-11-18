@@ -6,8 +6,18 @@ import { createSandboxService, getSandboxProviderKind } from '@/server/services/
 import { type ToolExecutionContext } from '../../types';
 import { credsRuntime, ServerCredsService } from '../creds';
 
-const { getMember } = vi.hoisted(() => ({
+const { getMember, resolveSandboxSessionConfig } = vi.hoisted(() => ({
   getMember: vi.fn(),
+  resolveSandboxSessionConfig: vi.fn(),
+}));
+
+vi.mock('@/server/services/sandbox', () => ({
+  createSandboxService: vi.fn(),
+  getSandboxProviderKind: vi.fn(() => 'market'),
+  MarketSandboxProvider: vi.fn(function (this: any) {
+    this.callTool = vi.fn(async () => ({ result: {}, success: true }));
+  }),
+  resolveSandboxSessionConfig,
 }));
 
 vi.mock('@/database/models/workspaceMember', () => ({
@@ -20,18 +30,17 @@ vi.mock('@/server/services/market', () => ({
   MarketService: vi.fn(),
 }));
 
-vi.mock('@/server/services/sandbox', () => ({
-  createSandboxService: vi.fn(),
-  getSandboxProviderKind: vi.fn(() => 'market'),
-  resolveSandboxSessionConfig: vi.fn(async () => ({ claim: null, mode: 'ephemeral' })),
-}));
-
 describe('credsRuntime', () => {
   const serverDB = {} as NonNullable<ToolExecutionContext['serverDB']>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     getMember.mockResolvedValue({ role: 'member' });
+    resolveSandboxSessionConfig.mockResolvedValue({
+      claim: null,
+      drive: 'personal',
+      mode: 'ephemeral',
+    });
   });
 
   it('signs verified workspace context into the Market trusted-client identity', async () => {
@@ -126,6 +135,89 @@ describe('credsRuntime', () => {
     expect(result.success).toBe(false);
     expect(result.error?.message).toContain('unavailable in shared conversations');
   });
+
+  describe('injectCredsToSandbox', () => {
+    const mockInject = () => {
+      const inject = vi.fn().mockResolvedValue({ credentials: { env: {} }, success: true });
+      vi.mocked(MarketService).mockImplementation(function () {
+        return { market: { creds: { inject } } } as any;
+      });
+      return inject;
+    };
+
+    // Regression: inject only sent keys/sandbox/topicId/userId, so a topic on a
+    // persistent environment or a drive had its credentials written into a
+    // throwaway sandbox, which the next persistent tool call then replaced.
+    it.each([
+      ['persistent', 'inst-1'],
+      ['drive', undefined],
+    ] as const)('routes injection to the topic %s sandbox', async (mode, environment) => {
+      resolveSandboxSessionConfig.mockResolvedValue({
+        claim: { key: 'u-user-1' },
+        drive: 'personal',
+        environment,
+        mode,
+      });
+      const inject = mockInject();
+
+      const runtime = await credsRuntime.factory({
+        serverDB,
+        toolManifestMap: {},
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+      const result = await (runtime as any).injectCredsToSandbox({ keys: ['FOO'] });
+
+      expect(result.success).toBe(true);
+      expect(inject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          keys: ['FOO'],
+          sandboxInstanceId: environment,
+          sandboxMode: mode,
+          topicId: 'topic-1',
+        }),
+      );
+    });
+
+    // A device-routed run executes commands on the device, so an injection
+    // would report success while no command could ever read the values.
+    it('refuses when the run is routed to a device', async () => {
+      const inject = mockInject();
+
+      const runtime = await credsRuntime.factory({
+        activeDeviceId: 'device-1',
+        executionPlan: { deviceId: 'device-1', kind: 'device', target: 'device' },
+        serverDB,
+        toolManifestMap: {},
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+      const result = await (runtime as any).injectCredsToSandbox({ keys: ['FOO'] });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('SandboxUnreachable');
+      expect(inject).not.toHaveBeenCalled();
+    });
+
+    // In auto mode the Cloud Sandbox tool still reaches the sandbox even with a
+    // device routed, so refusing on "target is not sandbox" would block it.
+    it('allows injection in auto mode with a device routed', async () => {
+      const inject = mockInject();
+
+      const runtime = await credsRuntime.factory({
+        activeDeviceId: 'device-1',
+        executionPlan: { deviceId: 'device-1', kind: 'device', target: 'auto' },
+        serverDB,
+        toolManifestMap: {},
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+      const result = await (runtime as any).injectCredsToSandbox({ keys: ['FOO'] });
+
+      expect(result.success).toBe(true);
+      expect(inject).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('ServerCredsService.injectCreds', () => {
@@ -150,7 +242,9 @@ describe('ServerCredsService.injectCreds', () => {
       success: true,
     };
     const inject = vi.fn().mockResolvedValue(injectResult);
-    const service = new ServerCredsService(buildMarketService(inject), 'workspace-1');
+    const service = new ServerCredsService(buildMarketService(inject), {
+      workspaceId: 'workspace-1',
+    });
 
     const result = await service.injectCreds({
       keys: ['dc-cli-token'],
@@ -166,7 +260,79 @@ describe('ServerCredsService.injectCreds', () => {
       topicId: 'topic-1',
       userId: 'user-1',
     });
-    expect(result).toBe(injectResult);
+    expect(result).toEqual({
+      ...injectResult,
+      envVarsByKey: { 'dc-cli-token': ['DC_CLI_TOKEN'] },
+    });
+  });
+
+  it('maps each key to its own variables and merges ~/.creds/env after injecting', async () => {
+    const inject = vi.fn().mockImplementation(async ({ keys }: { keys: string[] }) => {
+      const byKey: Record<string, Record<string, string>> = {
+        'deepseek': { DEEPSEEK_API_KEY: 'sk******ab' },
+        'lobehub-database': {
+          CLOUD_DATABASE_URL: 'po******db',
+          LOBEHUB_DATABASE_URL: 'po******db',
+          MARKET_DATABASE_URL: 'po******db',
+        },
+      };
+      return {
+        credentials: { env: Object.assign({}, ...keys.map((key) => byKey[key])) },
+        notFound: [],
+        success: true,
+      };
+    });
+    const callTool = vi.fn().mockResolvedValue({ result: {}, success: true });
+    const service = new ServerCredsService(buildMarketService(inject), {
+      sandboxProvider: { callTool },
+    });
+
+    const result = await service.injectCreds({
+      keys: ['lobehub-database', 'deepseek'],
+      sandbox: true,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    expect(result.envVarsByKey).toEqual({
+      'deepseek': ['DEEPSEEK_API_KEY'],
+      'lobehub-database': ['CLOUD_DATABASE_URL', 'LOBEHUB_DATABASE_URL', 'MARKET_DATABASE_URL'],
+    });
+    // Only the first call writes into the sandbox; the per-key lookups don't.
+    expect(inject.mock.calls.map(([req]) => [req.keys, req.sandbox])).toEqual([
+      [['lobehub-database', 'deepseek'], true],
+      [['lobehub-database'], false],
+      [['deepseek'], false],
+    ]);
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(callTool).toHaveBeenCalledWith('runCommand', {
+      command: expect.stringContaining('~/.creds/.env.ledger'),
+    });
+    for (const value of ['sk******ab', 'po******db']) {
+      expect(JSON.stringify(callTool.mock.calls)).not.toContain(value);
+    }
+  });
+
+  it('still returns the injection when merging ~/.creds/env fails', async () => {
+    const inject = vi.fn().mockResolvedValue({
+      credentials: { env: { DEEPSEEK_API_KEY: 'sk******ab' } },
+      notFound: [],
+      success: true,
+    });
+    const callTool = vi.fn().mockRejectedValue(new Error('sandbox down'));
+    const service = new ServerCredsService(buildMarketService(inject), {
+      sandboxProvider: { callTool },
+    });
+
+    const result = await service.injectCreds({
+      keys: ['deepseek'],
+      sandbox: true,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.envVarsByKey).toEqual({ deepseek: ['DEEPSEEK_API_KEY'] });
   });
 });
 
@@ -193,12 +359,9 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
       plaintext: { OPENROUTER_API_KEY: 'sk-or-real-key', OPENROUTER_MANAGEMENT_KEY: 'sk-or-mgmt' },
     });
     const writer = buildWriter();
-    const service = new ServerCredsService(
-      buildMarketService({ get, list }),
-      undefined,
-      false,
-      writer as never,
-    );
+    const service = new ServerCredsService(buildMarketService({ get, list }), {
+      sandboxService: writer as never,
+    });
 
     const result = await service.injectCreds({
       keys: ['Openrouter'],
@@ -224,12 +387,9 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     const list = vi.fn().mockResolvedValue({ data: [] });
     const get = vi.fn();
     const writer = buildWriter();
-    const service = new ServerCredsService(
-      buildMarketService({ get, list }),
-      undefined,
-      false,
-      writer as never,
-    );
+    const service = new ServerCredsService(buildMarketService({ get, list }), {
+      sandboxService: writer as never,
+    });
 
     const result = await service.injectCreds({
       keys: ['missing'],
@@ -252,12 +412,9 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
     });
     const get = vi.fn();
     const writer = buildWriter();
-    const service = new ServerCredsService(
-      buildMarketService({ get, list }),
-      undefined,
-      false,
-      writer as never,
-    );
+    const service = new ServerCredsService(buildMarketService({ get, list }), {
+      sandboxService: writer as never,
+    });
 
     const result = await service.injectCreds({
       keys: ['gh', 'hdr'],
@@ -274,12 +431,10 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
   it('refuses a share-visitor run before touching market or the sandbox', async () => {
     const list = vi.fn();
     const writer = buildWriter();
-    const service = new ServerCredsService(
-      buildMarketService({ list }),
-      undefined,
-      true,
-      writer as never,
-    );
+    const service = new ServerCredsService(buildMarketService({ list }), {
+      isShareVisitor: true,
+      sandboxService: writer as never,
+    });
 
     await expect(
       service.injectCreds({ keys: ['x'], sandbox: true, topicId: 't', userId: 'u' }),
@@ -289,8 +444,9 @@ describe('ServerCredsService.injectCreds (onlyboxes)', () => {
   });
 
   it('throws when no sandbox writer is wired for the onlyboxes provider', async () => {
+    vi.mocked(getSandboxProviderKind).mockReturnValue('onlyboxes');
     const list = vi.fn();
-    const service = new ServerCredsService(buildMarketService({ list }), undefined, false);
+    const service = new ServerCredsService(buildMarketService({ list }));
 
     await expect(
       service.injectCreds({ keys: ['a'], sandbox: true, topicId: 't', userId: 'u' }),
@@ -334,6 +490,10 @@ describe('credsRuntime.factory (onlyboxes)', () => {
       env: { OPENROUTER_API_KEY: 'sk-or-real-key' },
       files: [],
     });
-    expect(result.state.credentials.env).toEqual({ OPENROUTER_API_KEY: 'sk******ey' });
+    // v2.3.4 redacts every env value to `******` in the tool state — Market's
+    // partial mask keeps the first/last two characters, which upstream no
+    // longer exposes. The real value still lands in the sandbox (asserted
+    // above via `writeCredentials`).
+    expect(result.state.credentials.env).toEqual({ OPENROUTER_API_KEY: '******' });
   });
 });
