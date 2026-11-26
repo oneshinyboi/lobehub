@@ -6,7 +6,6 @@ import HeaderActions from './index';
 
 const mocks = vi.hoisted(() => ({
   canShare: true,
-  enableBusinessFeatures: true,
   openShareModal: vi.fn(),
   workspaceId: null as string | null,
 }));
@@ -42,21 +41,9 @@ vi.mock('@/hooks/usePermission', () => ({
   usePermission: () => ({ allowed: mocks.canShare }),
 }));
 
-vi.mock('@/store/serverConfig', () => ({
-  useServerConfigStore: (selector: (state: { enableBusinessFeatures: boolean }) => unknown) =>
-    selector({ enableBusinessFeatures: mocks.enableBusinessFeatures }),
-}));
-
-vi.mock('@/store/serverConfig/selectors', () => ({
-  serverConfigSelectors: {
-    enableBusinessFeatures: (s: { enableBusinessFeatures: boolean }) => s.enableBusinessFeatures,
-  },
-}));
-
 describe('Conversation header actions', () => {
   beforeEach(() => {
     mocks.canShare = true;
-    mocks.enableBusinessFeatures = true;
     mocks.openShareModal.mockClear();
     mocks.workspaceId = null;
   });
@@ -98,17 +85,5 @@ describe('Conversation header actions', () => {
       expect(screen.getByTestId('share-popover')).toHaveAttribute('data-open', 'true'),
     );
     expect(mocks.openShareModal).not.toHaveBeenCalled();
-  });
-
-  it('goes straight to the export modal when link sharing is unavailable', async () => {
-    mocks.workspaceId = 'ws-1';
-    mocks.enableBusinessFeatures = false;
-    render(<HeaderActions />);
-
-    fireEvent.click(screen.getByRole('button'));
-    fireEvent.click(await screen.findByText('Share'));
-
-    expect(mocks.openShareModal).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId('share-popover')).toBeNull();
   });
 });

@@ -10,15 +10,13 @@ import { useShareModal } from '@/features/ShareModal';
 import { LazySharePopover as SharePopover } from '@/features/SharePopover/lazy';
 import { usePermission } from '@/hooks/usePermission';
 import HeaderSlot from '@/routes/(main)/agent/(chat)/_layout/HeaderSlot';
-import { useServerConfigStore } from '@/store/serverConfig';
-import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 
 import { useMenu } from './useMenu';
 
 const HeaderActions = memo(() => {
   const { agentId, topicId } = useAgentContext();
   const workspaceId = useActiveWorkspaceId();
-  const enableTopicLinkShare = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
+  const enableTopicLinkShare = true;
   const { allowed: canShare } = usePermission('edit_own_content');
   const { openShareModal } = useShareModal();
 
