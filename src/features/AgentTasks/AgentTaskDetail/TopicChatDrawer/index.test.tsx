@@ -213,6 +213,15 @@ vi.mock('@/features/ShareModal', () => ({
   }),
 }));
 
+// Link sharing is always on in this fork, so the share action renders inside
+// the lazy popover; unlike the app's lazy wrapper it has to resolve here for
+// the trigger icon to be in the tree on the first render.
+vi.mock('@/features/SharePopover/lazy', () => ({
+  LazySharePopover: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="share-popover">{children}</div>
+  ),
+}));
+
 vi.mock('@/features/Workspace/useWorkspaceAwareNavigate', () => ({
   useWorkspaceAwareNavigate: () => mocks.navigate,
 }));
@@ -450,6 +459,7 @@ describe('TopicChatDrawer', () => {
     expect(moreIcon).toBeDefined();
     expect(expandIcon).toBeDefined();
     expect(shareIcon).toBeDefined();
+    expect(getByTestId('share-popover')).toContainElement(shareIcon!);
     expect(moreIcon!).toHaveAttribute('data-size', 'small');
     expect(shareIcon!).toHaveAttribute('data-size', JSON.stringify({ blockSize: 32, size: 16 }));
     expect(getByTestId('panel-actions-slot')).toContainElement(shareIcon!);
