@@ -191,3 +191,36 @@ dispatch trigger, not just a gate). Expect several tasks to run at once. That is
 intended here: the orchestrator gates merges, not execution. The sequential
 client chain (WS-3 → WS-4 → WS-5 → WS-6) is serialised by dependency, not by
 convention.
+
+## Workspace-auth audit (after RV-0)
+
+RV-0 found `agentAvailability` reading a raw header workspace id with no membership
+proof. To find the rest of that class we audited by **following the procedure
+chain**, not by grepping for `ws*Procedure` literally — the literal grep reports
+106 files and is almost entirely false positives.
+
+Why: `agentProcedure`, `topicProcedure`, `taskProcedure`, `fileProcedure` and
+`goalProcedure` are themselves built on `wsCompatProcedure`, so every router
+using them runs `cloudWorkspaceAuth` through one level of indirection.
+
+| Stage | Count |
+| --- | --- |
+| Files reading `ctx.workspaceId` without a literal `ws*Procedure` | 106 |
+| …that declare a router (helpers excluded) | 82 |
+| …guarded through a chained base procedure | ~50 |
+| **Genuinely unguarded** | **~6 after inspection** |
+
+Of those, most are **user-scoped by design** and correctly ignore workspace:
+`userProcedure`, `memorySearchProcedure`, `messengerProcedure`, `pushToken`,
+`llmGenerationTracing`, `market/creds`.
+
+Two needed fixing:
+- `agentAvailability` → WS-17 (merged `b912447452`)
+- `agentQuota` → WS-19 (five models built off the raw header id)
+
+One to verify, not assume: `topic/operationReads` reads `principal.workspaceId`,
+which should come from a validated operation token rather than the request header.
+
+**Lesson for future reviews:** audit by chain resolution. A composition-site grep
+finds routers that *declare* workspace scoping; it cannot find routers that merely
+*consume* the header, and those are the ones that leak.
