@@ -28,18 +28,18 @@ permissive (no limits), which is what we want.
 
 ## Where the seam is
 
-| Path | What it is | State |
-| --- | --- | --- |
-| `packages/business-server/src/lambda-routers/*` | Cloud routers, present as typed stubs. The input schemas are already declared — treat them as the contract. | `NOT_IMPLEMENTED` or empty results |
-| `packages/business-server/src/trpc-middlewares/workspaceAuth.ts` | `cloudWorkspaceAuth`, `requireWorkspaceRole*`, `ws*Procedure` | no-ops / missing role checks |
-| `packages/business-server/src/trpc-middlewares/rbacPermission.ts` | `withRbacPermission` and friends | always passes |
-| `src/business/client/**` | Client hooks, settings pages, header injection | `[]`, `null`, `{}` |
-| `packages/business/const/src/index.ts` | `ENABLE_BUSINESS_FEATURES = false` — a **build-time** constant, 24 consumers | off |
-| `apps/server/src/routers/lambda/index.ts` | Mounts every router at `/trpc/lambda`; there is no separate service | real |
-| `packages/trpc/src/lambda/context.ts` | Sets `ctx.workspaceId` from the `X-Workspace-Id` header | real, **unvalidated** |
-| `packages/database/src/utils/workspace.ts` | `buildWorkspaceWhere` / `buildWorkspacePayload`; ~127 models already use them | real |
-| `packages/database/src/models/{workspace,workspaceMember,workspaceTeam,rbac,resourcePermission,workspaceAuditLog,workspaceUserSettings}.ts` | Data layer | real and complete |
-| `src/spa/router/workspaceSettingsRoutes.tsx`, `src/routes/(main)/[workspaceSlug]/*` | Routing, URL sync, settings tabs | real, page bodies stubbed |
+| Path                                                                                                                                        | What it is                                                                                                  | State                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `packages/business-server/src/lambda-routers/*`                                                                                             | Cloud routers, present as typed stubs. The input schemas are already declared — treat them as the contract. | `NOT_IMPLEMENTED` or empty results |
+| `packages/business-server/src/trpc-middlewares/workspaceAuth.ts`                                                                            | `cloudWorkspaceAuth`, `requireWorkspaceRole*`, `ws*Procedure`                                               | no-ops / missing role checks       |
+| `packages/business-server/src/trpc-middlewares/rbacPermission.ts`                                                                           | `withRbacPermission` and friends                                                                            | always passes                      |
+| `src/business/client/**`                                                                                                                    | Client hooks, settings pages, header injection                                                              | `[]`, `null`, `{}`                 |
+| `packages/business/const/src/index.ts`                                                                                                      | `ENABLE_BUSINESS_FEATURES = false` — a **build-time** constant, 24 consumers                                | off                                |
+| `apps/server/src/routers/lambda/index.ts`                                                                                                   | Mounts every router at `/trpc/lambda`; there is no separate service                                         | real                               |
+| `packages/trpc/src/lambda/context.ts`                                                                                                       | Sets `ctx.workspaceId` from the `X-Workspace-Id` header                                                     | real, **unvalidated**              |
+| `packages/database/src/utils/workspace.ts`                                                                                                  | `buildWorkspaceWhere` / `buildWorkspacePayload`; \~127 models already use them                              | real                               |
+| `packages/database/src/models/{workspace,workspaceMember,workspaceTeam,rbac,resourcePermission,workspaceAuditLog,workspaceUserSettings}.ts` | Data layer                                                                                                  | real and complete                  |
+| `src/spa/router/workspaceSettingsRoutes.tsx`, `src/routes/(main)/[workspaceSlug]/*`                                                         | Routing, URL sync, settings tabs                                                                            | real, page bodies stubbed          |
 
 Upstream's own override mechanism is `.github/actions/business-overlay`: the cloud
 build copies a private overlay repo over the checkout. We use the same idea in a
@@ -138,10 +138,14 @@ git worktree add ../lobehub.wt/<task-id> -b feat/<task-id>-<slug> feat/workspace
 cd ../lobehub.wt/<task-id> && pnpm install --offline
 ```
 
-- Branch from the **phase integration branch**, never from `downstream-main`.
-- Merge back into the phase integration branch, not into `downstream-main`.
-- Maximum **3** concurrent worktrees — each needs its own `node_modules` (~3.7 GB).
-- Target branch, worktree path and file scope are given in every task.
+- Branch from the **phase integration branch**, never from `main` directly.
+- The orchestrator merges task branches back into the phase integration branch.
+  Merging to `main` and deploying is a separate decision made by Diamond.
+- Concurrency is limited by RAM, not disk. Measured on this machine: \~0.85 GB per
+  vitest run, \~1.5 GB for `type-check`, \~1 GB per install, \~400 MB per worktree.
+  With 30 GB total and \~20 GB free, 4–6 concurrent tasks is comfortable. Keep the
+  genuinely independent tasks parallel; serialise the ones sharing files (the
+  WS-3 → WS-4 → WS-5 client chain) by dependency, not by convention.
 
 ## Task series
 
@@ -154,20 +158,31 @@ Review tasks RV-0 / RV-1 / RV-2 gate each phase and run on `openrouter/moonshota
 so the reviewer is a different model family from the implementers. Read `REVIEW.md`
 before reviewing.
 
-## Base branch policy (added after WS-7)
+## Base branch policy
 
-`feat/workspace-phase-<N>` is **main-synced**: upstream `main` is an ancestor of it.
-WS-7 merged `main` for the link-invitation data layer, and the phase-2 branch was rebuilt
-the same way, because `downstream-main` predates the workspace data layer by roughly six
-weeks. Everything in `packages/database/src/models/` that this plan depends on exists only
-on main.
+The integration branch is **main-synced**: `main` is an ancestor of it, and `main`
+is what Diamond already builds and deploys from. `main` is at version `2.3.6`.
 
-- **Do not merge `main`, or any other upstream ref, yourself.** If a model method you need
-  is missing, stop and comment on the task. A base sync is a deliberate, reviewed step, and
-  doing it mid-task forks the branch history.
-- **Deployment note:** branches on this base carry six weeks of upstream changes. Merging
-  one back to `downstream-main` ships those changes to production, so it needs a staging
-  deploy, not a fast-forward on a Friday.
+**`downstream-main` is obsolete — ignore it.** Verified with
+`git merge-base --is-ancestor 33018175 main` (true) and
+`git rev-list --count main..33018175` (**0 commits unique to it**). It is frozen at
+16 October and contains nothing that `main` lacks, including the Onlyboxes
+credential-injection and CI work. Do not branch from it, merge to it, or treat it
+as a baseline for anything.
+
+Why the main sync happened: WS-7 and WS-11 both needed model methods that did not
+exist on the older branch, so `main` was merged for the link-invitation data
+layer. The original plan's premise — "the data layer is already complete on the
+fork" — was checked against upstream `main`, not the fork's older branch. That
+premise was wrong; the sync was the right correction.
+
+- **Do not merge `main`, or any other upstream ref, yourself.** If a model method
+  you need is missing, stop and comment on the task. A base sync is a deliberate,
+  reviewed step, and doing it mid-task forks the branch history.
+- **Deployment note:** `feat/workspace-phase-0` is `main@2.3.6` plus the overlay.
+  There is no lineage reconciliation to do — deploying it is the same shape as
+  deploying `main` today. A staging run is still sensible for a feature of this
+  size, but it is not forced by divergence.
 
 ## Execution rules (binding on every agent)
 
@@ -203,18 +218,19 @@ Why: `agentProcedure`, `topicProcedure`, `taskProcedure`, `fileProcedure` and
 `goalProcedure` are themselves built on `wsCompatProcedure`, so every router
 using them runs `cloudWorkspaceAuth` through one level of indirection.
 
-| Stage | Count |
-| --- | --- |
-| Files reading `ctx.workspaceId` without a literal `ws*Procedure` | 106 |
-| …that declare a router (helpers excluded) | 82 |
-| …guarded through a chained base procedure | ~50 |
-| **Genuinely unguarded** | **~6 after inspection** |
+| Stage                                                            | Count                    |
+| ---------------------------------------------------------------- | ------------------------ |
+| Files reading `ctx.workspaceId` without a literal `ws*Procedure` | 106                      |
+| …that declare a router (helpers excluded)                        | 82                       |
+| …guarded through a chained base procedure                        | \~50                     |
+| **Genuinely unguarded**                                          | **\~6 after inspection** |
 
 Of those, most are **user-scoped by design** and correctly ignore workspace:
 `userProcedure`, `memorySearchProcedure`, `messengerProcedure`, `pushToken`,
 `llmGenerationTracing`, `market/creds`.
 
 Two needed fixing:
+
 - `agentAvailability` → WS-17 (merged `b912447452`)
 - `agentQuota` → WS-19 (five models built off the raw header id)
 
@@ -222,5 +238,5 @@ One to verify, not assume: `topic/operationReads` reads `principal.workspaceId`,
 which should come from a validated operation token rather than the request header.
 
 **Lesson for future reviews:** audit by chain resolution. A composition-site grep
-finds routers that *declare* workspace scoping; it cannot find routers that merely
-*consume* the header, and those are the ones that leak.
+finds routers that _declare_ workspace scoping; it cannot find routers that merely
+_consume_ the header, and those are the ones that leak.

@@ -98,19 +98,29 @@ const collectScopedProcedures = (): ScopedProcedure[] => {
     workspaceId: workspaceY,
   } as never);
 
-  const sources: Array<{ caller: unknown; name: string; path: string; proc: any }> = [
+  // Only the shape the matrix actually reads: the middleware chain it filters
+  // on, and the procedure kind reported in failures. Anything narrower than
+  // this would be a lie about what tRPC hands back from `_def.procedures`.
+  interface ProcedureShape {
+    _def: {
+      middlewares: unknown[];
+      type: string;
+    };
+  }
+
+  const sources: Array<{ caller: unknown; name: string; path: string; proc: ProcedureShape }> = [
     ...Object.entries(lambdaRouter._def.procedures).map(([path, proc]) => ({
       caller: callerA,
       name: path,
       path,
-      proc: proc as any,
+      proc: proc as ProcedureShape,
     })),
     ...Object.entries(toolsRouter._def.procedures).map(([path, proc]) => ({
       caller: callerTools,
       // Namespaced for the report only; the caller path stays router-relative.
       name: `tools.${path}`,
       path,
-      proc: proc as any,
+      proc: proc as ProcedureShape,
     })),
   ];
 
