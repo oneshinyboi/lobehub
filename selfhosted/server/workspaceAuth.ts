@@ -134,21 +134,20 @@ const requireWorkspaceId = trpc.middleware(async ({ ctx, next }) => {
   return next({ ctx: { workspaceId: ctx.workspaceId } });
 });
 
-export const wsProcedure = authedProcedure.use(requireWorkspaceId);
+/**
+ * Resolves the workspace for every workspace-scoped procedure. A header alone
+ * is never proof of access (CONTEXT.md I3): `cloudWorkspaceAuth` verifies the
+ * membership and puts the role on the context, so composing a further role gate
+ * (or reading workspace-scoped rows) is safe.
+ */
+const requireWorkspace = authedProcedure.use(requireWorkspaceId).use(cloudWorkspaceAuth);
 
-export const wsMemberProcedure = authedProcedure
-  .use(requireWorkspaceId)
-  .use(cloudWorkspaceAuth)
-  .use(requireWorkspaceRole('member'));
+export const wsProcedure = requireWorkspace;
 
-export const wsOwnerProcedure = authedProcedure
-  .use(requireWorkspaceId)
-  .use(cloudWorkspaceAuth)
-  .use(requireWorkspaceRole('owner'));
+export const wsMemberProcedure = requireWorkspace.use(requireWorkspaceRole('member'));
 
-export const wsAdminProcedure = authedProcedure
-  .use(requireWorkspaceId)
-  .use(cloudWorkspaceAuth)
-  .use(requireWorkspaceRole('admin'));
+export const wsOwnerProcedure = requireWorkspace.use(requireWorkspaceRole('owner'));
+
+export const wsAdminProcedure = requireWorkspace.use(requireWorkspaceRole('admin'));
 
 export const wsCompatProcedure = authedProcedure.use(cloudWorkspaceAuth);

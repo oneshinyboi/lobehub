@@ -9,6 +9,7 @@ import {
   wsCompatProcedure,
   wsMemberProcedure,
   wsOwnerProcedure,
+  wsProcedure,
 } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { getServerDB } from '@/database/core/db-adaptor';
 import { getTestDB } from '@/database/core/getTestDB';
@@ -27,6 +28,7 @@ const ownerId = 'ws-auth-owner';
 const adminId = 'ws-auth-admin';
 const memberId = 'ws-auth-member';
 const outsiderId = 'ws-auth-outsider';
+const viewerId = 'ws-auth-viewer';
 
 const workspaceId = 'ws-auth-workspace';
 const foreignWorkspaceId = 'ws-auth-foreign-workspace';
@@ -42,6 +44,11 @@ const testRouter = router({
   member: wsMemberProcedure.query(() => 'member-ok'),
   owner: wsOwnerProcedure.query(() => 'owner-ok'),
   requireAdmin: wsCompatProcedure.use(requireWorkspaceRole('admin')).query(() => 'role-ok'),
+  ws: wsProcedure.query(({ ctx }) => ({
+    workspaceId: ctx.workspaceId,
+    workspaceRole: ctx.workspaceRole,
+    workspaceSlug: ctx.workspaceSlug,
+  })),
   whenScopedAdmin: wsCompatProcedure
     .use(requireWorkspaceRoleWhenScoped('admin'))
     .query(() => 'scoped-ok'),
@@ -61,7 +68,13 @@ beforeEach(async () => {
 
   await serverDB
     .insert(users)
-    .values([{ id: ownerId }, { id: adminId }, { id: memberId }, { id: outsiderId }]);
+    .values([
+      { id: ownerId },
+      { id: adminId },
+      { id: memberId },
+      { id: outsiderId },
+      { id: viewerId },
+    ]);
   await serverDB.insert(workspaces).values([
     { id: workspaceId, name: 'Acme', primaryOwnerId: ownerId, slug: 'acme' },
     { id: foreignWorkspaceId, name: 'Other', primaryOwnerId: outsiderId, slug: 'other' },
@@ -70,6 +83,7 @@ beforeEach(async () => {
     { role: 'owner', userId: ownerId, workspaceId },
     { role: 'admin', userId: adminId, workspaceId },
     { role: 'member', userId: memberId, workspaceId },
+    { role: 'viewer', userId: viewerId, workspaceId },
     { role: 'owner', userId: outsiderId, workspaceId: foreignWorkspaceId },
   ]);
 });
@@ -122,6 +136,48 @@ describe('cloudWorkspaceAuth — I3 membership check', () => {
     });
 
     await expect(caller(memberId, workspaceId).member()).resolves.toBe('member-ok');
+  });
+});
+
+describe('wsProcedure — resolves membership itself', () => {
+  it('refuses a foreign workspace id', async () => {
+    // The gap WS-1 left: `wsProcedure` used to prove only that an id was
+    // supplied. A router composing it directly was reachable with any id.
+    await expect(caller(memberId, foreignWorkspaceId).ws()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Not a member of this workspace',
+    });
+  });
+
+  it('refuses an outsider and an unknown workspace', async () => {
+    await expect(caller(outsiderId, workspaceId).ws()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+
+    await expect(caller(memberId, unknownWorkspaceId).ws()).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('passes a member and gets the resolved role on the context', async () => {
+    await expect(caller(memberId, workspaceId).ws()).resolves.toEqual({
+      workspaceId,
+      workspaceRole: 'member',
+      workspaceSlug: 'acme',
+    });
+  });
+
+  it('still refuses a viewer through wsMemberProcedure', async () => {
+    // `wsProcedure` admits a viewer (membership is proven), but the member
+    // gate built on top of it must reject the write-level role.
+    await expect(caller(viewerId, workspaceId).ws()).resolves.toMatchObject({
+      workspaceRole: 'viewer',
+    });
+
+    await expect(caller(viewerId, workspaceId).member()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Requires member role or higher',
+    });
   });
 });
 
