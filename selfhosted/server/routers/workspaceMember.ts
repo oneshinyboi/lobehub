@@ -1,6 +1,12 @@
 import { INVITATION_EXPIRY_DAYS } from '@lobechat/const';
-import type { WorkspaceInvitationItem, WorkspaceMemberItem } from '@lobechat/database/schemas';
+import type {
+  WorkspaceInvitationItem,
+  WorkspaceItem,
+  WorkspaceMemberItem,
+} from '@lobechat/database/schemas';
+import { users } from '@lobechat/database/schemas';
 import { TRPCError } from '@trpc/server';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
@@ -9,8 +15,11 @@ import {
 } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { getServerDB } from '@/database/core/db-adaptor';
 import { UserModel } from '@/database/models/user';
+import { WorkspaceModel } from '@/database/models/workspace';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
-import { router } from '@/libs/trpc/lambda';
+import { authedProcedure, router } from '@/libs/trpc/lambda';
+import type { InvitationErrorCode } from '@/selfhosted/client/features/InviteAccept/errors';
+import { INVITATION_ERROR } from '@/selfhosted/client/features/InviteAccept/errors';
 import { getWorkspaceMemberName } from '@/utils/workspaceMemberName';
 
 /** A membership row joined with the public profile of the member. */
@@ -30,6 +39,17 @@ export interface WorkspaceMemberSummary extends WorkspaceMemberItem {
  */
 export interface WorkspaceInvitationLink extends WorkspaceInvitationItem {
   url: string;
+}
+
+/**
+ * What a caller receives after redeeming a link: the membership they now hold
+ * (or already held) and enough workspace identity to switch into it.
+ */
+export interface AcceptedInvitation {
+  /** True when the caller was already a member and nothing was written. */
+  alreadyMember: boolean;
+  membership: WorkspaceMemberItem;
+  workspace: WorkspaceItem;
 }
 
 // Cloud gates these on the compat procedure plus a role check rather than on a
@@ -71,6 +91,41 @@ const workspaceIdOf = (ctx: { workspaceId?: string | null }): string => {
   }
   return ctx.workspaceId;
 };
+
+/**
+ * A revoked link and an expired one are different problems for the person
+ * holding it (ask the owner for a new link vs. wait for a fresh one), so they
+ * keep distinct errors. Neither message names the workspace: the token holder
+ * may not be a member yet, and an invitation error must not confirm that any
+ * particular workspace exists.
+ */
+const invitationError = (code: InvitationErrorCode): TRPCError => {
+  switch (code) {
+    case INVITATION_ERROR.EXPIRED: {
+      return new TRPCError({ code: 'BAD_REQUEST', message: code });
+    }
+    case INVITATION_ERROR.NOT_FOUND: {
+      return new TRPCError({ code: 'NOT_FOUND', message: code });
+    }
+    case INVITATION_ERROR.REVOKED: {
+      return new TRPCError({ code: 'BAD_REQUEST', message: code });
+    }
+    case INVITATION_ERROR.USED: {
+      return new TRPCError({ code: 'CONFLICT', message: code });
+    }
+    case INVITATION_ERROR.WRONG_ACCOUNT: {
+      return new TRPCError({ code: 'FORBIDDEN', message: code });
+    }
+    default: {
+      // Unreachable for the declared union; unknown reasons read as invalid.
+      return new TRPCError({ code: 'NOT_FOUND', message: INVITATION_ERROR.NOT_FOUND });
+    }
+  }
+};
+
+const isExpired = (invitation: WorkspaceInvitationItem, now: Date) =>
+  invitation.status === 'expired' ||
+  (invitation.expiresAt !== null && invitation.expiresAt.getTime() <= now.getTime());
 
 // Cloud overrides this at the same path with the real workspaceMemberRouter.
 // The invitation flows, the member directory and the link-invite management are
@@ -202,6 +257,85 @@ export const workspaceMemberRouter = router({
       );
 
       return { revoked };
+    }),
+
+  /**
+   * Redeem an invitation link. Signed-in callers only; the token is the secret,
+   * so there is no workspace header to send and no workspace id in the input.
+   *
+   * Order matters:
+   * 1. An unknown token is `NOT_FOUND`.
+   * 2. An existing member gets their membership back, whatever the invitation's
+   *    state — this is what makes accepting twice a no-op. It is also safe: the
+   *    caller already belongs to the workspace, so nothing is revealed.
+   * 3. A single-use invitation addressed to another account is refused before
+   *    its state is examined, so the intended recipient gets the actionable
+   *    "wrong account" copy rather than a misleading expiry message.
+   * 4. Revoked, already-used and expired each keep their own error.
+   *
+   * Reusable share links stay `pending` after an accept; a single-use
+   * invitation is marked `accepted` so a different user cannot reuse it.
+   */
+  acceptInvitation: authedProcedure
+    .input(z.object({ token: z.string().min(1) }))
+    .mutation(async ({ ctx, input }): Promise<AcceptedInvitation> => {
+      const userId = ctx.userId!;
+      const db = await getServerDB();
+      const memberModel = new WorkspaceMemberModel(db, userId);
+      const invitation = await memberModel.findInvitationByToken(input.token);
+
+      if (!invitation) throw invitationError(INVITATION_ERROR.NOT_FOUND);
+
+      const workspace = await new WorkspaceModel(db, userId).findById(invitation.workspaceId);
+      if (!workspace) throw invitationError(INVITATION_ERROR.NOT_FOUND);
+
+      const existing = await memberModel.getMember(invitation.workspaceId, userId);
+      if (existing) {
+        return {
+          alreadyMember: true,
+          membership: existing,
+          workspace,
+        };
+      }
+
+      if (invitation.email) {
+        const user = await db.query.users.findFirst({
+          columns: { email: true },
+          where: eq(users.id, userId),
+        });
+        const matches =
+          !!user?.email && user.email.toLowerCase() === invitation.email.toLowerCase();
+
+        if (!matches) throw invitationError(INVITATION_ERROR.WRONG_ACCOUNT);
+      }
+
+      if (invitation.status === 'revoked') throw invitationError(INVITATION_ERROR.REVOKED);
+      // `accepted` is terminal for a single-use invitation; check it before
+      // the expiry so a used link that has since aged out still reads as used.
+      // A reusable link stays `pending` and never reaches this branch.
+      if (!invitation.reusable && invitation.status !== 'pending')
+        throw invitationError(INVITATION_ERROR.USED);
+      if (isExpired(invitation, new Date())) throw invitationError(INVITATION_ERROR.EXPIRED);
+      if (invitation.status !== 'pending') throw invitationError(INVITATION_ERROR.USED);
+
+      // `catch` keeps a malformed stored role from making the invitation
+      // unusable: the built-in default is member, the least surprising grant.
+      const role = invitationRoleSchema.catch('member').parse(invitation.role);
+      const membership = await memberModel.addMember({
+        role,
+        userId,
+        workspaceId: invitation.workspaceId,
+      });
+
+      if (!invitation.reusable) {
+        await memberModel.updateInvitationStatus(invitation.id, 'accepted');
+      }
+
+      return {
+        alreadyMember: false,
+        membership,
+        workspace,
+      };
     }),
 
   // A member's workspace title and responsibilities. Cloud lets any member edit

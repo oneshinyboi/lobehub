@@ -8,6 +8,7 @@ import { getTestDB } from '@/database/core/getTestDB';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import { users, workspaceInvitations, workspaceMembers, workspaces } from '@/database/schemas';
 import type { LobeChatDatabase } from '@/database/type';
+import { INVITATION_ERROR } from '@/selfhosted/client/features/InviteAccept/errors';
 
 // The router reaches the database through `getServerDB`; point that at the real
 // (PGlite) test database so every assertion below runs the actual data layer.
@@ -20,6 +21,8 @@ const adminId = 'wm-router-admin';
 const memberId = 'wm-router-member';
 const viewerId = 'wm-router-viewer';
 const outsiderId = 'wm-router-outsider';
+const applicantId = 'wm-router-applicant';
+const secondApplicantId = 'wm-router-second-applicant';
 
 const workspaceId = 'wm-router-workspace';
 const otherWorkspaceId = 'wm-router-other-workspace';
@@ -49,6 +52,8 @@ beforeEach(async () => {
       { id: memberId },
       { id: viewerId },
       { id: outsiderId },
+      { email: 'applicant@example.com', id: applicantId },
+      { email: 'second-applicant@example.com', id: secondApplicantId },
     ]);
   await serverDB.insert(workspaces).values([
     { id: workspaceId, name: 'Acme', primaryOwnerId: ownerId, slug: 'acme' },
@@ -212,5 +217,170 @@ describe('workspaceMemberRouter — legacy invite and pending invitations', () =
     const invitations = await caller(ownerId, workspaceId).listInvitations();
 
     expect(invitations.map((invitation) => invitation.id)).toEqual([pending.id]);
+  });
+});
+
+describe('workspaceMemberRouter — acceptInvitation', () => {
+  const captureError = async (promise: Promise<unknown>) => {
+    try {
+      await promise;
+    } catch (error) {
+      return error as { code?: string; message?: string };
+    }
+
+    throw new Error('Expected the invitation to be rejected');
+  };
+
+  const memberRows = async (userId: string) =>
+    (await new WorkspaceMemberModel(serverDB, userId).listMembers(workspaceId)).filter(
+      (member) => member.userId === userId,
+    );
+
+  it('lets an invited second user join at the invited role', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({ role: 'admin' });
+
+    const accepted = await caller(applicantId).acceptInvitation({ token: invitation.token });
+
+    expect(accepted.alreadyMember).toBe(false);
+    expect(accepted.membership).toMatchObject({
+      role: 'admin',
+      userId: applicantId,
+      workspaceId,
+    });
+    expect(accepted.workspace).toMatchObject({ id: workspaceId, slug: 'acme' });
+
+    const stored = await new WorkspaceMemberModel(serverDB, applicantId).getMember(
+      workspaceId,
+      applicantId,
+    );
+    expect(stored?.role).toBe('admin');
+    // The reusable link stays live for the next invitee.
+    const stillPending = await new WorkspaceMemberModel(serverDB, ownerId).findInvitationByToken(
+      invitation.token,
+    );
+    expect(stillPending?.status).toBe('pending');
+  });
+
+  it('is idempotent: accepting twice returns the same membership and writes no duplicate', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({ role: 'viewer' });
+
+    const first = await caller(applicantId).acceptInvitation({ token: invitation.token });
+    const second = await caller(applicantId).acceptInvitation({ token: invitation.token });
+
+    expect(first.alreadyMember).toBe(false);
+    expect(second.alreadyMember).toBe(true);
+    expect(second.membership.id).toBe(first.membership.id);
+    expect(second.membership.role).toBe('viewer');
+    expect(await memberRows(applicantId)).toHaveLength(1);
+  });
+
+  it('returns the existing membership to an already-member caller instead of a revoked error', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({});
+    await caller(ownerId, workspaceId).revokeInviteLink({ id: invitation.id });
+
+    const accepted = await caller(memberId).acceptInvitation({ token: invitation.token });
+
+    expect(accepted.alreadyMember).toBe(true);
+    expect(accepted.membership).toMatchObject({ role: 'member', userId: memberId });
+  });
+
+  it('rejects an expired token with its own reason and never names the workspace', async () => {
+    await serverDB.insert(workspaceInvitations).values({
+      expiresAt: new Date(Date.now() - 60_000),
+      inviterId: ownerId,
+      role: 'member',
+      token: 'expired-link-token',
+      workspaceId,
+    });
+
+    const error = await captureError(
+      caller(applicantId).acceptInvitation({ token: 'expired-link-token' }),
+    );
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: INVITATION_ERROR.EXPIRED });
+    expect(error.message).not.toContain('Acme');
+    expect(error.message).not.toContain('acme');
+    expect(error.message).not.toContain(workspaceId);
+  });
+
+  it('rejects a revoked token with a different reason from an expired one', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({});
+    await caller(ownerId, workspaceId).revokeInviteLink({ id: invitation.id });
+
+    const error = await captureError(
+      caller(applicantId).acceptInvitation({ token: invitation.token }),
+    );
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: INVITATION_ERROR.REVOKED });
+    expect(error.message).not.toBe(INVITATION_ERROR.EXPIRED);
+    expect(error.message).not.toContain('Acme');
+    expect(error.message).not.toContain(workspaceId);
+  });
+
+  it('rejects an unknown token without revealing any workspace', async () => {
+    const error = await captureError(
+      caller(applicantId).acceptInvitation({ token: 'not-a-real-token' }),
+    );
+
+    expect(error).toMatchObject({ code: 'NOT_FOUND', message: INVITATION_ERROR.NOT_FOUND });
+    expect(error.message).not.toContain('Acme');
+    expect(error.message).not.toContain(workspaceId);
+  });
+
+  it('consumes a single-use invitation, then refuses a second account as already used', async () => {
+    const invitation = await caller(ownerId, workspaceId).invite({ role: 'viewer' });
+
+    const accepted = await caller(applicantId).acceptInvitation({ token: invitation.token });
+    expect(accepted.membership.role).toBe('viewer');
+
+    const stored = await new WorkspaceMemberModel(serverDB, ownerId).findInvitationByToken(
+      invitation.token,
+    );
+    expect(stored?.status).toBe('accepted');
+
+    const error = await captureError(
+      caller(secondApplicantId).acceptInvitation({ token: invitation.token }),
+    );
+    expect(error).toMatchObject({ code: 'CONFLICT', message: INVITATION_ERROR.USED });
+    // The second account got no membership.
+    expect(await memberRows(secondApplicantId)).toHaveLength(0);
+  });
+
+  it('lets several accounts use one reusable link', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({ role: 'member' });
+
+    await caller(applicantId).acceptInvitation({ token: invitation.token });
+    await caller(secondApplicantId).acceptInvitation({ token: invitation.token });
+
+    expect((await memberRows(applicantId))[0]?.role).toBe('member');
+    expect((await memberRows(secondApplicantId))[0]?.role).toBe('member');
+  });
+
+  it('refuses an invitation addressed to a different account', async () => {
+    const invitation = await caller(ownerId, workspaceId).invite({
+      email: 'applicant@example.com',
+    });
+
+    const error = await captureError(
+      caller(secondApplicantId).acceptInvitation({ token: invitation.token }),
+    );
+
+    expect(error).toMatchObject({ code: 'FORBIDDEN', message: INVITATION_ERROR.WRONG_ACCOUNT });
+    expect(error.message).not.toContain('Acme');
+    expect(await memberRows(secondApplicantId)).toHaveLength(0);
+
+    // The intended recipient (case-insensitive match) can still redeem it.
+    const accepted = await caller(applicantId).acceptInvitation({ token: invitation.token });
+    expect(accepted.membership.role).toBe('member');
+  });
+
+  it('requires a signed-in caller', async () => {
+    const invitation = await caller(ownerId, workspaceId).createInviteLink({});
+
+    const error = await captureError(
+      workspaceMemberRouter.createCaller({} as never).acceptInvitation({ token: invitation.token }),
+    );
+
+    expect(error).toMatchObject({ code: 'UNAUTHORIZED' });
   });
 });

@@ -15,6 +15,7 @@ conflicts in a file that is **not** listed here, something went out of scope.
 | `src/business/client/features/User/UserPanelWorkspaceSection.tsx`  | re-export settings/switcher entry                                                                             | WS-5  | planned |
 | `packages/business-server/src/lambda-routers/workspaceMember.ts`   | re-export                                                                                                     | WS-7  | planned |
 | `src/routes/(main)/invite/[token]` (new route)                     | new file, no upstream edit                                                                                    | WS-8  | planned |
+| `src/business/client/BusinessDesktopRoutes.tsx`                    | re-export from `selfhosted/client/features/InviteAccept/routes` (registers `/invite/:token`)                  | WS-8  | planned |
 | `src/business/client/BusinessSettingPages/WorkspaceMembers.tsx`    | re-export                                                                                                     | WS-9  | planned |
 | `src/business/client/hooks/useWorkspaceMembers.ts` and siblings    | re-export                                                                                                     | WS-10 | planned |
 | `packages/business-server/src/lambda-routers/workspaceTeam.ts`     | re-export                                                                                                     | WS-11 | planned |
