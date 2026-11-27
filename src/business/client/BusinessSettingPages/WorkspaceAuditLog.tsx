@@ -1,3 +1,1 @@
-export default function WorkspaceAuditLog() {
-  return null;
-}
+export { default } from '@/selfhosted/client/features/WorkspaceAuditLog';
