@@ -153,3 +153,18 @@ WS-12 teams page · WS-13 audit log · WS-14 permissions · WS-15 share flag.
 Review tasks RV-0 / RV-1 / RV-2 gate each phase and run on `openrouter/moonshotai/kimi-k3.1-pro`
 so the reviewer is a different model family from the implementers. Read `REVIEW.md`
 before reviewing.
+
+## Base branch policy (added after WS-7)
+
+`feat/workspace-phase-<N>` is **main-synced**: upstream `main` is an ancestor of it.
+WS-7 merged `main` for the link-invitation data layer, and the phase-2 branch was rebuilt
+the same way, because `downstream-main` predates the workspace data layer by roughly six
+weeks. Everything in `packages/database/src/models/` that this plan depends on exists only
+on main.
+
+- **Do not merge `main`, or any other upstream ref, yourself.** If a model method you need
+  is missing, stop and comment on the task. A base sync is a deliberate, reviewed step, and
+  doing it mid-task forks the branch history.
+- **Deployment note:** branches on this base carry six weeks of upstream changes. Merging
+  one back to `downstream-main` ships those changes to production, so it needs a staging
+  deploy, not a fast-forward on a Friday.
