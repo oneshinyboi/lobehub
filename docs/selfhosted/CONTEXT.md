@@ -2,7 +2,9 @@
 
 Read this before starting any task in the `WS-*` series. It is the shared brief for
 implementation **and** review agents. If a task instruction and this document
-disagree, stop and comment on the task rather than guessing.
+disagree, stop and comment on the task rather than guessing — **with one
+exception: the commands in §Commands and §Worktree protocol are authoritative
+and supersede anything a task body says about tooling.**
 
 ## Goal
 
@@ -90,13 +92,36 @@ selfhosted/
 
 Alias: `@/selfhosted/*` → `./selfhosted/*` (added by WS-0).
 
+## Environment notes
+
+This machine has two traps that will cost an hour if you hit them cold.
+
+1. **`PNPM_HOME` is wrong in the inherited environment.** It points at
+   `/home/Diamond/.local/share/pnpm` (capital D), a path that does not exist, so
+   pnpm's version manager fails with `EACCES: mkdir`. Before any `pnpm` command
+   in a fresh shell:
+
+   ```bash
+   export PNPM_HOME=/home/diamond/.local/share/pnpm
+   ```
+
+2. **There is no root `pnpm-lock.yaml`** — it is gitignored in this repo, so
+   `--frozen-lockfile` is always an error. Worse, the tree currently pins
+   `@next/env@16.4.6`, which is **not on the registry**, so a network resolve
+   fails. Install from the local store instead:
+
+   ```bash
+   pnpm install --offline
+   ```
+
 ## Commands
 
 ```bash
-pnpm type-check                 # tsrs, what CI runs
-pnpm vitest run <path>          # single file / directory
-pnpm lint:ts                    # oxlint
-pnpm dev                        # local app on :3010
+export PNPM_HOME=/home/diamond/.local/share/pnpm   # see Environment notes
+pnpm type-check            # tsrs on tsconfig.type-check.json — what CI runs
+pnpm test-app              # vitest run (whole repo)
+pnpm vitest run <path>     # one file or directory
+pnpm lint:ts               # oxlint on src/ tests/ apps/server/src/
 ```
 
 `pnpm type-check` is the gate that matters most: a re-export whose signature
@@ -108,13 +133,14 @@ One task = one worktree = one branch. Repo root is
 `/home/diamond/Projects/AI/lobehub`.
 
 ```bash
+export PNPM_HOME=/home/diamond/.local/share/pnpm
 git worktree add ../lobehub.wt/<task-id> -b feat/<task-id>-<slug> feat/workspace-phase-<N>
-git -C ../lobehub.wt/<task-id> pnpm install --frozen-lockfile
+cd ../lobehub.wt/<task-id> && pnpm install --offline
 ```
 
 - Branch from the **phase integration branch**, never from `downstream-main`.
 - Merge back into the phase integration branch, not into `downstream-main`.
-- Maximum **3** concurrent worktrees — each needs its own `node_modules`.
+- Maximum **3** concurrent worktrees — each needs its own `node_modules` (~3.7 GB).
 - Target branch, worktree path and file scope are given in every task.
 
 ## Task series
@@ -124,4 +150,6 @@ WS-4 header injection · WS-5 switcher · WS-6 isolation suite · WS-7 invitatio
 WS-8 acceptance · WS-9 members page · WS-10 member identity · WS-11 teams router ·
 WS-12 teams page · WS-13 audit log · WS-14 permissions · WS-15 share flag.
 
-Review tasks RV-0 / RV-1 / RV-2 gate each phase; read `REVIEW.md` before reviewing.
+Review tasks RV-0 / RV-1 / RV-2 gate each phase and run on `openrouter/moonshotai/kimi-k3`
+so the reviewer is a different model family from the implementers. Read `REVIEW.md`
+before reviewing.
