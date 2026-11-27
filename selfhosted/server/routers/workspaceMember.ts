@@ -20,6 +20,7 @@ import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import type { InvitationErrorCode } from '@/selfhosted/client/features/InviteAccept/errors';
 import { INVITATION_ERROR } from '@/selfhosted/client/features/InviteAccept/errors';
+import { WORKSPACE_MEMBER_ERROR } from '@/selfhosted/client/features/WorkspaceMembers/errors';
 import { getWorkspaceMemberName } from '@/utils/workspaceMemberName';
 
 /** A membership row joined with the public profile of the member. */
@@ -127,6 +128,34 @@ const isExpired = (invitation: WorkspaceInvitationItem, now: Date) =>
   invitation.status === 'expired' ||
   (invitation.expiresAt !== null && invitation.expiresAt.getTime() <= now.getTime());
 
+const memberRoleSchema = z.enum(['admin', 'member', 'viewer']);
+
+/**
+ * Refuse a change that would leave the workspace without an owner.
+ *
+ * The role column is the source of truth (CONTEXT.md D4) and the schema keeps
+ * active owners unique, but the client cannot see the whole roster at write
+ * time. This check is therefore the server's job: the UI only renders the
+ * refusal it gets back instead of pre-disabling the last owner's controls.
+ */
+const assertMemberIsNotLastOwner = async (
+  model: WorkspaceMemberModel,
+  workspaceId: string,
+  userId: string,
+) => {
+  const members = await model.listMembers(workspaceId);
+  const target = members.find((member) => member.userId === userId);
+  if (target?.role !== 'owner') return;
+
+  const ownerCount = members.filter((member) => member.role === 'owner').length;
+  if (ownerCount <= 1) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: WORKSPACE_MEMBER_ERROR.LAST_OWNER,
+    });
+  }
+};
+
 // Cloud overrides this at the same path with the real workspaceMemberRouter.
 // The invitation flows, the member directory and the link-invite management are
 // implemented here on top of the data layer; `updateProfile` keeps the stub
@@ -198,6 +227,69 @@ export const workspaceMemberRouter = router({
           const byName = getWorkspaceMemberName(a).localeCompare(getWorkspaceMemberName(b));
           return byName === 0 ? a.userId.localeCompare(b.userId) : byName;
         });
+    }),
+
+  /**
+   * Change a member's built-in role. Inviting through this endpoint never
+   * grants `owner`: ownership moves only through the dedicated transfer flow.
+   *
+   * The last-owner guard runs before the write and refuses with a stable code
+   * so the page can explain why instead of silently dropping the change.
+   */
+  updateRole: wsCompatAdminProcedure
+    .input(z.object({ role: memberRoleSchema, userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }): Promise<WorkspaceMemberItem> => {
+      const workspaceId = workspaceIdOf(ctx);
+      const db = await getServerDB();
+      const model = new WorkspaceMemberModel(db, ctx.userId!);
+
+      const target = await model.getMember(workspaceId, input.userId);
+      if (!target) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: WORKSPACE_MEMBER_ERROR.MEMBER_NOT_FOUND,
+        });
+      }
+
+      await assertMemberIsNotLastOwner(model, workspaceId, input.userId);
+      await model.updateMemberRole(workspaceId, input.userId, input.role);
+
+      // Re-read so the caller gets the row as stored (including the updatedAt
+      // the model owns) rather than a client-side reconstruction.
+      const updated = await model.getMember(workspaceId, input.userId);
+      if (!updated) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: WORKSPACE_MEMBER_ERROR.MEMBER_NOT_FOUND,
+        });
+      }
+
+      return updated;
+    }),
+
+  /**
+   * Remove a member from the workspace. Same last-owner refusal as `updateRole`
+   * — the owner's row is the one membership that cannot disappear on its own.
+   */
+  removeMember: wsCompatAdminProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }): Promise<{ removed: boolean }> => {
+      const workspaceId = workspaceIdOf(ctx);
+      const db = await getServerDB();
+      const model = new WorkspaceMemberModel(db, ctx.userId!);
+
+      const target = await model.getMember(workspaceId, input.userId);
+      if (!target) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: WORKSPACE_MEMBER_ERROR.MEMBER_NOT_FOUND,
+        });
+      }
+
+      await assertMemberIsNotLastOwner(model, workspaceId, input.userId);
+      await model.removeMember(workspaceId, input.userId);
+
+      return { removed: true };
     }),
 
   /** Pending single-use invitations (link-only: no mail has been sent). */

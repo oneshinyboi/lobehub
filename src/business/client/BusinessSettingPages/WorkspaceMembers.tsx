@@ -1,3 +1,1 @@
-export default function WorkspaceMembers() {
-  return null;
-}
+export { default } from '@/selfhosted/client/features/WorkspaceMembers';

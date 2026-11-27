@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { workspaceMemberRouter } from '@/business/server/lambda-routers/workspaceMember';
@@ -6,6 +7,7 @@ import { getServerDB } from '@/database/core/db-adaptor';
 import { getTestDB } from '@/database/core/getTestDB';
 import { users, workspaceMembers, workspaces } from '@/database/schemas';
 import type { LobeChatDatabase } from '@/database/type';
+import { WORKSPACE_MEMBER_ERROR } from '@/selfhosted/client/features/WorkspaceMembers/errors';
 
 // The router resolves its database through `getServerDB`; point that at the
 // real (PGlite) test database so the procedures run against the real model.
@@ -117,5 +119,81 @@ describe('workspaceMemberRouter.list', () => {
       code: 'FORBIDDEN',
       message: 'Not a member of this workspace',
     });
+  });
+});
+
+describe('workspaceMemberRouter.updateRole', () => {
+  it('lets an admin promote a member', async () => {
+    await expect(
+      caller(adminId).updateRole({ role: 'admin', userId: memberId }),
+    ).resolves.toMatchObject({ role: 'admin', userId: memberId });
+
+    const [row] = await serverDB
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(eq(workspaceMembers.userId, memberId), eq(workspaceMembers.workspaceId, workspaceId)),
+      );
+    expect(row.role).toBe('admin');
+  });
+
+  it('refuses a plain member', async () => {
+    await expect(
+      caller(memberId).updateRole({ role: 'admin', userId: memberId }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('surfaces the last-owner refusal instead of writing', async () => {
+    await expect(
+      caller(adminId).updateRole({ role: 'viewer', userId: ownerId }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: WORKSPACE_MEMBER_ERROR.LAST_OWNER,
+    });
+
+    const [row] = await serverDB
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(eq(workspaceMembers.userId, ownerId), eq(workspaceMembers.workspaceId, workspaceId)),
+      );
+    expect(row.role).toBe('owner');
+  });
+});
+
+describe('workspaceMemberRouter.removeMember', () => {
+  it('lets an admin remove a member', async () => {
+    await expect(caller(adminId).removeMember({ userId: memberId })).resolves.toEqual({
+      removed: true,
+    });
+
+    const [row] = await serverDB
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(eq(workspaceMembers.userId, memberId), eq(workspaceMembers.workspaceId, workspaceId)),
+      );
+    expect(row.deletedAt).not.toBeNull();
+  });
+
+  it('refuses a plain member', async () => {
+    await expect(caller(memberId).removeMember({ userId: adminId })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('surfaces the last-owner refusal instead of removing the owner', async () => {
+    await expect(caller(adminId).removeMember({ userId: ownerId })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: WORKSPACE_MEMBER_ERROR.LAST_OWNER,
+    });
+
+    const [row] = await serverDB
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(eq(workspaceMembers.userId, ownerId), eq(workspaceMembers.workspaceId, workspaceId)),
+      );
+    expect(row.deletedAt).toBeNull();
   });
 });
