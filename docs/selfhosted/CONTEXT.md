@@ -150,6 +150,6 @@ WS-4 header injection · WS-5 switcher · WS-6 isolation suite · WS-7 invitatio
 WS-8 acceptance · WS-9 members page · WS-10 member identity · WS-11 teams router ·
 WS-12 teams page · WS-13 audit log · WS-14 permissions · WS-15 share flag.
 
-Review tasks RV-0 / RV-1 / RV-2 gate each phase and run on `openrouter/moonshotai/kimi-k3`
+Review tasks RV-0 / RV-1 / RV-2 gate each phase and run on `openrouter/moonshotai/kimi-k3.1-pro`
 so the reviewer is a different model family from the implementers. Read `REVIEW.md`
 before reviewing.
