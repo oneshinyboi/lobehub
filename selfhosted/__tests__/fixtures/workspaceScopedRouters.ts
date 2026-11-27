@@ -519,6 +519,11 @@ export const WORKSPACE_SCOPED_SOURCES: WorkspaceScopedSource[] = [
     uses: ['wsCompatProcedure'],
   },
   {
+    file: 'selfhosted/server/routers/agentAvailability.ts',
+    routerPath: 'agentAvailability',
+    uses: ['wsCompatProcedure'],
+  },
+  {
     file: 'selfhosted/server/routers/workspaceMember.ts',
     routerPath: 'workspaceMember',
     uses: ['wsCompatProcedure'],
