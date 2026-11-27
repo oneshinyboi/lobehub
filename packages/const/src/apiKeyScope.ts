@@ -384,6 +384,10 @@ export const TRPC_NAMESPACE_API_KEY_RULES: Record<string, TrpcNamespaceScopeRule
   workspaceCreds: 'blocked',
   workspaceData: 'blocked',
   workspaceMember: rw('workspace:read', null),
+  // Team rows are workspace-scoped, so writes need the workspace grant too.
+  // Read-only keys may list teams and their members; anything else must not
+  // fall into the default-deny bucket just because the router is new.
+  workspaceTeam: rw('workspace:read', 'workspace:write'),
   workspaceUsage: 'blocked',
   workspaceUserSettings: rw('workspace:read', 'workspace:write'),
 };
