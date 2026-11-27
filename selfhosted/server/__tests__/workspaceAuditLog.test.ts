@@ -278,7 +278,14 @@ describe('workspaceAuditLog.list — input contract', () => {
 
 describe('workspaceAuditLog.list — declared stub schema is preserved', () => {
   it('accepts exactly the stub fields and nothing else', () => {
-    const procedure = (workspaceAuditLogRouter._def.procedures as any).list;
+    // The router exposes its procedures through a tRPC-internal record. Only
+    // the input-parser slot is needed here, so describe exactly that shape
+    // rather than widening the whole record to `any`.
+    const procedures = workspaceAuditLogRouter._def.procedures as Record<
+      string,
+      { _def: { inputs: unknown[] } }
+    >;
+    const procedure = procedures.list;
     const parser = procedure._def.inputs[0];
     const schema = parser instanceof z.ZodOptional ? parser.unwrap() : parser;
 
