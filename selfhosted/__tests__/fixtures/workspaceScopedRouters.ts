@@ -509,7 +509,7 @@ export const WORKSPACE_SCOPED_SOURCES: WorkspaceScopedSource[] = [
     uses: ['wsCompatProcedure'],
   },
   {
-    file: 'packages/business-server/src/lambda-routers/workspaceAuditLog.ts',
+    file: 'selfhosted/server/routers/workspaceAuditLog.ts',
     routerPath: 'workspaceAuditLog',
     uses: ['wsCompatProcedure'],
   },
