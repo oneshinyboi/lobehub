@@ -27,6 +27,7 @@
       "@/locales/*": ["./packages/locales/src/*", "./src/locales/*"],
       "@/business/server/*": ["./packages/business-server/src/*", "./src/business/server/*"],
       "@/server/*": ["./apps/server/src/*"],
+      "@/selfhosted/*": ["./selfhosted/*"],
       "@/*": ["./src/*"],
       "~base-ui-stubs": ["./tests/mocks/baseUiStubs.tsx"],
       "~test-utils": ["./tests/utils.tsx"]
@@ -63,6 +64,8 @@
     "tests/**/*.tsx",
     "apps/server/**/*.ts",
     "apps/server/**/*.tsx",
+    "selfhosted/**/*.ts",
+    "selfhosted/**/*.tsx",
     "scripts/elasticsearchReindex/**/*.ts",
     "scripts/elasticsearchSync/**/*.ts",
     "scripts/installFtsSearchSyncCapture/**/*.ts",
