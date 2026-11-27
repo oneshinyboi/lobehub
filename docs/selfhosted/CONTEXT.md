@@ -168,3 +168,26 @@ on main.
 - **Deployment note:** branches on this base carry six weeks of upstream changes. Merging
   one back to `downstream-main` ships those changes to production, so it needs a staging
   deploy, not a fast-forward on a Friday.
+
+## Execution rules (binding on every agent)
+
+- **Commit to your own task branch and stop.** Never merge, never rebase, never
+  force-push, never create a branch other than your own. The integration branch
+  advances only through the orchestrator, one merge point per batch.
+- **Base branch: take the integration branch tip** (`feat/workspace-phase-0`
+  until the phase closes; phases 1 and 2 continue on that same branch, no
+  per-phase branch is created). If a task body names a concrete base commit or
+  branch that no longer exists, that line is stale — use the integration tip.
+- **Do not merge `main` or any upstream ref.** It is already an ancestor of the
+  integration branch. If something you need is missing, the tree changed — stop
+  and comment.
+- **Dependencies: use the integration tip at start**, and expect it to move while
+  you work. Your files are additive, so the orchestrator's cherry-pick handles it.
+
+## How the task system actually behaves
+
+Completing a task fires every task that depended on it (`addDependencies` is a
+dispatch trigger, not just a gate). Expect several tasks to run at once. That is
+intended here: the orchestrator gates merges, not execution. The sequential
+client chain (WS-3 → WS-4 → WS-5 → WS-6) is serialised by dependency, not by
+convention.
