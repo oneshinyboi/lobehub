@@ -1,3 +1,1 @@
-export const getActiveWorkspaceSlug = (): string | null => null;
-
-export const useActiveWorkspaceSlug = (): string | null => null;
+export * from '@/selfhosted/client/hooks/useActiveWorkspaceSlug';

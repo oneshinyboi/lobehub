@@ -1,3 +1,1 @@
-import type { WorkspaceListItem } from './useActiveWorkspace';
-
-export const useWorkspaces = (): WorkspaceListItem[] => [];
+export * from '@/selfhosted/client/hooks/useWorkspaces';

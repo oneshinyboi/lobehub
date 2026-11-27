@@ -1,1 +1,1 @@
-export const useHasActiveWorkspace = (): boolean => false;
+export * from '@/selfhosted/client/hooks/useHasActiveWorkspace';

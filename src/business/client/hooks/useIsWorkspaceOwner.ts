@@ -1,1 +1,1 @@
-export const useIsWorkspaceOwner = (): boolean => true;
+export * from '@/selfhosted/client/hooks/useIsWorkspaceOwner';

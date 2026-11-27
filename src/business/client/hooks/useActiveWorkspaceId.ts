@@ -1,3 +1,1 @@
-export const getActiveWorkspaceId = (): string | null => null;
-
-export const useActiveWorkspaceId = (): string | null => null;
+export * from '@/selfhosted/client/hooks/useActiveWorkspaceId';

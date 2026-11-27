@@ -1,1 +1,1 @@
-export const useIsWorkspaceLoading = (): boolean => false;
+export * from '@/selfhosted/client/hooks/useIsWorkspaceLoading';
