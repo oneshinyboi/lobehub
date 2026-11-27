@@ -1,3 +1,1 @@
-export default function WorkspaceTeams() {
-  return null;
-}
+export { default } from '@/selfhosted/client/features/WorkspaceTeams';
