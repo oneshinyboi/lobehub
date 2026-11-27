@@ -1,10 +1,21 @@
+import { INBOX_SESSION_ID } from '@lobechat/const';
+
 import { type SidebarAgentItem, type SidebarGroup } from '@/database/repositories/home';
 import { type HomeStore } from '@/store/home/store';
+
+import { AGENT_LIST_KEY } from './projection';
 
 /**
  * Get all pinned agents
  */
 const pinnedAgents = (s: HomeStore): SidebarAgentItem[] => s.pinnedAgents;
+
+/**
+ * Ids of the Agents / chat groups recommended to every workspace member, in
+ * the owners'/admins' order. Empty in personal mode.
+ */
+const EMPTY_IDS: string[] = [];
+const recommendedAgentIds = (s: HomeStore): string[] => s.recommendedAgentIds ?? EMPTY_IDS;
 
 /**
  * Get all agent groups (folders)
@@ -73,6 +84,10 @@ const privateUngroupedAgentsCount = (s: HomeStore): number => s.privateUngrouped
  */
 const isAgentListInit = (s: HomeStore): boolean => s.isAgentListInit;
 
+/** The server confirmed the list in this session (not only the persisted copy). */
+const isAgentListConfirmed = (s: HomeStore): boolean =>
+  s.isAgentListInit && s.agentListReplica.entries[AGENT_LIST_KEY]?.source === 'server';
+
 /**
  * Get all agents (pinned + grouped + ungrouped + private)
  */
@@ -88,6 +103,24 @@ const allAgents = (s: HomeStore): SidebarAgentItem[] => {
     ...s.privateUngroupedAgents,
   ];
 };
+
+/**
+ * Whether the loaded list carries Lobe AI (the inbox). It can be missing from a
+ * list cached before the server started returning it, or one fetched before
+ * the inbox row was first created.
+ */
+const hasInboxAgent = (s: HomeStore): boolean =>
+  allAgents(s).some((item) => item.slug === INBOX_SESSION_ID);
+
+/**
+ * Agents every workspace member can see: the sidebar list without the
+ * current user's private bucket.
+ */
+const sharedAgents = (s: HomeStore): SidebarAgentItem[] => [
+  ...s.pinnedAgents,
+  ...s.agentGroups.flatMap((g) => g.items),
+  ...s.ungroupedAgents,
+];
 
 /**
  * Get agent by id
@@ -118,7 +151,9 @@ export const homeAgentListSelectors = {
   allAgents,
   getAgentById,
   hasCustomAgents,
+  hasInboxAgent,
   hasPrivateAgents,
+  isAgentListConfirmed,
   isAgentListInit,
   pinnedAgents,
   privateAgentGroups,
@@ -126,6 +161,8 @@ export const homeAgentListSelectors = {
   privateUngroupedAgents,
   privateUngroupedAgentsCount,
   privateUngroupedAgentsLimited,
+  recommendedAgentIds,
+  sharedAgents,
   ungroupedAgents,
   ungroupedAgentsCount,
   ungroupedAgentsLimited,

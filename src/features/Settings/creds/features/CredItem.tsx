@@ -1,165 +1,79 @@
 'use client';
 
 import { type UserCredSummary } from '@lobechat/types';
-import { DropdownMenu, Flexbox, Icon, stopPropagation } from '@lobehub/ui';
-import { Avatar, Button, confirmModal, Tag } from '@lobehub/ui/base-ui';
-import {
-  Eye,
-  File,
-  Globe,
-  Key,
-  MoreHorizontalIcon,
-  Pencil,
-  TerminalSquare,
-  Trash2,
-} from 'lucide-react';
-import { type FC, memo } from 'react';
+import { Flexbox } from '@lobehub/ui';
+import * as stylex from '@stylexjs/stylex';
+import { type FC, memo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { usePermission } from '@/hooks/usePermission';
+import { useDensity } from '@/styles/density';
 
+import CredIcon from './CredIcon';
 import { styles } from './style';
 
 interface CredItemProps {
   cred: UserCredSummary;
-  /**
-   * Extra content rendered before the "..." menu — used by the workspace
-   * credential page to slot in the personal-credential share toggle without
-   * duplicating this row's layout.
-   */
-  extra?: React.ReactNode;
-  /**
-   * Action handlers are optional: omit them all to render a row without the
-   * "..." menu — e.g. the workspace page's personal tab, where management is
-   * gated by an owner-only workspace permission the caller's own credentials
-   * shouldn't answer to, so the menu would only ever render disabled. CRUD
-   * for those rows lives on the personal settings page instead.
-   */
-  onDelete?: (id: number) => void;
-  onEdit?: (cred: UserCredSummary) => void;
-  onView?: (cred: UserCredSummary) => void;
+  /** Right-aligned row meta, e.g. the workspace visibility tag and the author avatar. */
+  extra?: ReactNode;
+  /** Opens the item's detail, which holds its edit, remove and sharing actions. */
+  onClick: (cred: UserCredSummary) => void;
+  /** Tags shown after the name (owner, sharing state). */
+  tags?: ReactNode;
+  /** Inline marker right after the name, e.g. the private lock in the workspace list. */
+  titleSuffix?: ReactNode;
 }
 
-const typeIcons: Record<string, React.ReactNode> = {
-  'file': <File size={20} />,
-  'kv-env': <TerminalSquare size={20} />,
-  'kv-header': <Globe size={20} />,
-  'oauth': <Key size={20} />,
-};
-
-const typeColors: Record<string, string> = {
-  'file': 'purple',
-  'kv-env': 'blue',
-  'kv-header': 'cyan',
-  'oauth': 'green',
-};
-
-const CredItem: FC<CredItemProps> = memo(({ cred, extra, onEdit, onDelete, onView }) => {
+/**
+ * One vault item: the website's logo (else the OAuth avatar or the type icon),
+ * the name with its markers, and one line of "type · account · description".
+ * The whole row opens it.
+ */
+const CredItem: FC<CredItemProps> = memo(({ cred, extra, onClick, tags, titleSuffix }) => {
   const { t } = useTranslation('setting');
-  const { allowed: canManageCredentials } = usePermission('manage_provider_key');
+  const { compact, tokens } = useDensity();
 
-  const handleDelete = () => {
-    if (!canManageCredentials) return;
-
-    confirmModal({
-      content: t('creds.actions.deleteConfirm.content'),
-      okButtonProps: { danger: true },
-      okText: t('creds.actions.deleteConfirm.ok'),
-      onOk: () => onDelete?.(cred.id),
-      title: t('creds.actions.deleteConfirm.title'),
-    });
-  };
-
-  const canView = canManageCredentials && (cred.type === 'kv-env' || cred.type === 'kv-header');
-
-  const menuItems = [
-    ...(onView && canView
-      ? [
-          {
-            icon: <Icon icon={Eye} />,
-            key: 'view',
-            label: t('creds.actions.view'),
-            onClick: () => onView(cred),
-          },
-        ]
-      : []),
-    ...(onEdit
-      ? [
-          {
-            icon: <Icon icon={Pencil} />,
-            key: 'edit',
-            label: t('creds.actions.edit'),
-            disabled: !canManageCredentials,
-            onClick: () => onEdit(cred),
-          },
-        ]
-      : []),
-    ...(onDelete
-      ? [
-          {
-            danger: true,
-            disabled: !canManageCredentials,
-            icon: <Icon icon={Trash2} />,
-            key: 'delete',
-            label: t('creds.actions.delete'),
-            onClick: handleDelete,
-          },
-        ]
-      : []),
-  ];
-
-  const renderAvatar = () => {
-    if (cred.type === 'oauth' && cred.oauthAvatar) {
-      return <Avatar avatar={cred.oauthAvatar} size={32} />;
-    }
-    return (
-      // `display: flex` collapses the inline span's line box so the svg sits
-      // dead-center in the 48px container instead of on the text baseline.
-      <span style={{ color: 'var(--lobe-color-text-secondary)', display: 'flex' }}>
-        {typeIcons[cred.type]}
-      </span>
-    );
-  };
+  const subtitle = [t(`creds.types.${cred.type}`), cred.oauthUsername, cred.description]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <Flexbox
       horizontal
       align="center"
-      className={styles.container}
-      gap={16}
-      justify="space-between"
+      aria-label={cred.name}
+      gap={tokens.sectionGap}
+      role="button"
+      tabIndex={0}
+      className={
+        stylex.props(styles.container, compact && styles.containerCompact, styles.clickable)
+          .className
+      }
+      onClick={() => onClick(cred)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick(cred);
+        }
+      }}
     >
-      <Flexbox horizontal align="center" gap={16} style={{ flex: 1, overflow: 'hidden' }}>
-        <div className={styles.icon}>{renderAvatar()}</div>
-        <Flexbox gap={4} style={{ overflow: 'hidden' }}>
-          <Flexbox horizontal align="center" gap={8}>
-            <span className={styles.title}>{cred.name}</span>
-            <Tag color={typeColors[cred.type]}>{t(`creds.types.${cred.type}`)}</Tag>
-            {/* Only populated by organization-scoped list responses (workspaceCreds.list) —
-                distinguishes a member's shared personal credential from one the org owns directly. */}
-            {cred.ownerType === 'user' && (
-              <Tag>{t('creds.owner.sharedBy', { name: cred.ownerDisplayName })}</Tag>
-            )}
-          </Flexbox>
-          <Flexbox horizontal align="center" gap={8}>
-            <code className={styles.key}>{cred.key}</code>
-            {cred.description && (
-              <>
-                <span style={{ color: 'var(--lobe-color-text-quaternary)' }}>·</span>
-                <span className={styles.description}>{cred.description}</span>
-              </>
-            )}
-          </Flexbox>
+      <div {...stylex.props(styles.icon, compact && styles.iconCompact)}>
+        <CredIcon avatarSize={tokens.controlHeight} cred={cred} size={20} />
+      </div>
+      <Flexbox gap={compact ? 2 : 4} style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        <Flexbox horizontal align="center" gap={8}>
+          <span {...stylex.props(styles.title, compact && styles.titleCompact)}>{cred.name}</span>
+          {titleSuffix}
+          {tags}
         </Flexbox>
+        <span {...stylex.props(styles.description, compact && styles.descriptionCompact)}>
+          {subtitle}
+        </span>
       </Flexbox>
-      <Flexbox horizontal align="center" gap={8} onClick={stopPropagation}>
-        {extra}
-        {menuItems.length > 0 && (
-          <DropdownMenu items={menuItems} placement="bottomRight">
-            <Button disabled={!canManageCredentials} icon={MoreHorizontalIcon} />
-          </DropdownMenu>
-        )}
-      </Flexbox>
+      {extra && (
+        <Flexbox horizontal align="center" flex={'none'} gap={8}>
+          {extra}
+        </Flexbox>
+      )}
     </Flexbox>
   );
 });

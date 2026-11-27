@@ -1,9 +1,19 @@
 'use client';
 
-import { Center, Flexbox, Icon, Tooltip } from '@lobehub/ui';
-import { confirmModal, Input, Text, TextArea, toast, Upload } from '@lobehub/ui/base-ui';
-import { Form, useForm, useWatch } from '@lobehub/ui/base-ui/form';
-import { cssVar } from 'antd-style';
+import {
+  Center,
+  confirmModal,
+  cssVar,
+  Flexbox,
+  Icon,
+  Input,
+  Text,
+  TextArea,
+  toast,
+  Tooltip,
+  Upload,
+} from '@lobehub/ui';
+import { Form, useForm, useWatch } from '@lobehub/ui/form';
 import { CircleHelp, Globe, ImagePlus, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +21,8 @@ import { z } from 'zod';
 
 import EmojiPicker from '@/components/EmojiPicker';
 import ImperativeModal from '@/components/ImperativeModal';
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import { lambdaClient } from '@/libs/trpc/client';
 import { useFileStore } from '@/store/file';
 import { useGlobalStore } from '@/store/global';
@@ -91,6 +103,13 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
     // Avatar state
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
+    /**
+     * Upload and save failures render beside the control that caused them: the modal stays
+     * open, so a corner toast would sit far from the avatar / banner / footer buttons.
+     */
+    const [avatarError, setAvatarError] = useState('');
+    const [bannerError, setBannerError] = useState<InlineErrorState | null>(null);
+    const [submitError, setSubmitError] = useState<InlineErrorState | null>(null);
 
     // Banner state
     const [bannerUrl, setBannerUrl] = useState<string | null>(null);
@@ -169,8 +188,9 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
     // Handle avatar upload
     const handleAvatarUpload = useCallback(
       async (file: File) => {
+        setAvatarError('');
         if (file.size > MAX_FILE_SIZE) {
-          toast.error(t('profileSetup.errors.fileTooLarge'));
+          setAvatarError(t('profileSetup.errors.fileTooLarge'));
           return;
         }
 
@@ -182,7 +202,7 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
           }
         } catch (error) {
           console.error('[ProfileSetupModal] Avatar upload failed:', error);
-          toast.error(t('profileSetup.errors.uploadFailed'));
+          setAvatarError(t('profileSetup.errors.uploadFailed'));
         } finally {
           setAvatarUploading(false);
         }
@@ -198,8 +218,9 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
     // Handle banner upload
     const handleBannerUpload = useCallback(
       async (file: File) => {
+        setBannerError(null);
         if (file.size > MAX_FILE_SIZE) {
-          toast.error(t('profileSetup.errors.fileTooLarge'));
+          setBannerError(toInlineError(t('profileSetup.errors.fileTooLarge')));
           return;
         }
 
@@ -211,7 +232,7 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
           }
         } catch (error) {
           console.error('[ProfileSetupModal] Banner upload failed:', error);
-          toast.error(t('profileSetup.errors.uploadFailed'));
+          setBannerError(toInlineError(t('profileSetup.errors.uploadFailed'), error));
         } finally {
           setBannerUploading(false);
         }
@@ -226,8 +247,9 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
 
     const doSubmit = useCallback(async () => {
       // If not in automatic authorization mode, need to validate accessToken
+      setSubmitError(null);
       if (!enableMarketTrustedClient && !accessToken) {
-        toast.error(t('profileSetup.errors.notAuthenticated'));
+        setSubmitError(toInlineError(t('profileSetup.errors.notAuthenticated')));
         return;
       }
 
@@ -304,9 +326,10 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
             errorMessage.toLowerCase().includes('already taken') ||
             errorMessage.includes('CONFLICT')
           ) {
-            toast.error(t('profileSetup.errors.usernameTaken'));
+            // Shown under the User ID field; form.setErrors clears it when the user edits it
+            form.setErrors({ userName: t('profileSetup.errors.usernameTaken') });
           } else {
-            toast.error(t('profileSetup.errors.updateFailed'));
+            setSubmitError(toInlineError(t('profileSetup.errors.updateFailed'), error));
           }
         }
       } finally {
@@ -435,20 +458,27 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
             </Flexbox>
             {/* Avatar Section */}
             <Form.Field>
-              <EmojiPicker
-                allowDelete={!!avatarUrl}
-                loading={avatarUploading}
-                locale={locale}
-                shape="square"
-                size={80}
-                value={avatarUrl || undefined}
-                allowUpload={{
-                  enableEmoji: false,
-                }}
-                onChange={handleAvatarChange}
-                onDelete={handleAvatarDelete}
-                onUpload={handleAvatarUpload}
-              />
+              <Flexbox align="center" gap={6} style={{ maxWidth: 120 }}>
+                <EmojiPicker
+                  allowDelete={!!avatarUrl}
+                  loading={avatarUploading}
+                  locale={locale}
+                  shape="square"
+                  size={80}
+                  value={avatarUrl || undefined}
+                  allowUpload={{
+                    enableEmoji: false,
+                  }}
+                  onChange={handleAvatarChange}
+                  onDelete={handleAvatarDelete}
+                  onUpload={handleAvatarUpload}
+                />
+                {avatarError && (
+                  <Text style={{ color: cssVar.colorError, fontSize: 12, textAlign: 'center' }}>
+                    {avatarError}
+                  </Text>
+                )}
+              </Flexbox>
             </Form.Field>
           </Flexbox>
           <Form.Field
@@ -537,6 +567,11 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
                       </Center>
                     </div>
                   </Upload>
+                  {bannerError && (
+                    <InlineErrorText detail={bannerError.detail}>
+                      {bannerError.summary}
+                    </InlineErrorText>
+                  )}
                   {bannerUrl && (
                     <Flexbox horizontal align="center" gap={8} justify="flex-end">
                       <Text
@@ -609,6 +644,9 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
                 />
               </Form.Field>
             </>
+          )}
+          {submitError && (
+            <InlineErrorText detail={submitError.detail}>{submitError.summary}</InlineErrorText>
           )}
         </Form>
       </ImperativeModal>

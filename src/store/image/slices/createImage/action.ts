@@ -1,7 +1,11 @@
-import { handleGenerationPromptModerationError } from '@/business/client/handleGenerationPromptModerationError';
+import { toast } from '@lobehub/ui';
+import { t } from 'i18next';
+
 import { handleLobeHubModelDeprecatedError } from '@/business/client/handleLobeHubModelDeprecatedError';
+import { isGenerationPromptModerationError } from '@/business/client/isGenerationPromptModerationError';
 import { imageService } from '@/services/image';
 import { type StoreSetter } from '@/store/types';
+import { normalizeImageGenerationParams } from '@/utils/normalizeImageGenerationParams';
 
 import { type ImageStore } from '../../store';
 import { generationBatchSelectors } from '../generationBatch/selectors';
@@ -24,7 +28,11 @@ export class CreateImageActionImpl {
   }
 
   async createImage() {
-    this.#set({ isCreating: true }, false, 'createImage/startCreateImage');
+    this.#set(
+      { blockedPrompt: undefined, isCreating: true },
+      false,
+      'createImage/startCreateImage',
+    );
 
     const store = this.#get();
     const imageNum = imageGenerationConfigSelectors.imageNum(store);
@@ -78,7 +86,7 @@ export class CreateImageActionImpl {
         provider,
         model,
         imageNum,
-        params: parameters as any,
+        params: normalizeImageGenerationParams(parameters, model),
       });
 
       // 6. Only refresh generation batches if it's not a new topic
@@ -95,7 +103,10 @@ export class CreateImageActionImpl {
         'createImage/clearPrompt',
       );
     } catch (error) {
-      handleGenerationPromptModerationError(error);
+      // A rejected prompt is shown on the prompt input, where the user fixes it.
+      if (isGenerationPromptModerationError(error)) {
+        this.#set({ blockedPrompt: parameters.prompt }, false, 'createImage/promptBlocked');
+      }
       handleLobeHubModelDeprecatedError(error);
       throw error;
     } finally {
@@ -110,6 +121,10 @@ export class CreateImageActionImpl {
         this.#set({ isCreating: false }, false, 'createImage/endCreateImage');
       }
     }
+  }
+
+  dismissBlockedPrompt() {
+    this.#set({ blockedPrompt: undefined }, false, 'dismissBlockedPrompt');
   }
 
   async recreateImage(generationBatchId: string) {
@@ -128,22 +143,34 @@ export class CreateImageActionImpl {
     const imageNum = batch.generations.length;
 
     try {
-      // 1. Delete generation batch
-      await removeGenerationBatch(generationBatchId, activeGenerationTopicId);
+      if (!batch.config) throw new TypeError('Generation batch configuration is missing');
 
-      // 2. Create image via service
+      // 1. Create the replacement first: the server can reject the stored config (e.g. a param
+      // the model no longer declares), and the original batch must survive that rejection.
       await imageService.createImage({
         generationTopicId: activeGenerationTopicId,
         provider: batch.provider,
         model: batch.model,
         imageNum,
-        params: batch.config as any,
+        params: normalizeImageGenerationParams({ ...batch.config }, batch.model),
       });
+
+      // 2. Delete the batch being replaced. The replacement is already queued, so a failed
+      // cleanup must not surface as a failed regenerate: retrying would queue and charge again.
+      try {
+        await removeGenerationBatch(generationBatchId, activeGenerationTopicId);
+      } catch (error) {
+        console.error('[recreateImage] failed to remove the replaced batch', error);
+      }
 
       // 3. Refresh generation batches to show the real data
       await store.refreshGenerationBatches();
     } catch (error) {
-      handleGenerationPromptModerationError(error);
+      // Regenerating reuses the batch's prompt, not the input's, so there is no
+      // input to annotate; fall back to a toast.
+      if (isGenerationPromptModerationError(error)) {
+        toast.error(t('generation.promptModeration.blocked', { ns: 'common' }));
+      }
       handleLobeHubModelDeprecatedError(error);
       throw error;
     } finally {

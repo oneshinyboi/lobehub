@@ -40,6 +40,7 @@ describe('injectCredsIntoOnlyboxesSandbox', () => {
       files: [],
     });
     expect(result.credentials.env).toEqual({ OPENROUTER_API_KEY: 'sk******ey' });
+    expect(result.envVarsByKey).toEqual({ Openrouter: ['OPENROUTER_API_KEY'] });
     expect(result.success).toBe(true);
   });
 
@@ -106,6 +107,7 @@ describe('injectCredsIntoOnlyboxesSandbox', () => {
     expect(result.credentials.env).toEqual({
       GOOGLE_APPLICATION_CREDENTIALS: '~/.creds/files/gcp-sa/credentials.json',
     });
+    expect(result.envVarsByKey).toEqual({ 'gcp-sa': ['GOOGLE_APPLICATION_CREDENTIALS'] });
     expect(result.credentials.files).toEqual([
       {
         filename: 'credentials.json',
@@ -137,6 +139,50 @@ describe('injectCredsIntoOnlyboxesSandbox', () => {
 
     expect(result.unsupportedInSandbox).toEqual(['gcp-sa']);
     expect(sandboxService.writeCredentials).not.toHaveBeenCalled();
+  });
+
+  it('attributes each injected key to its own env var names', async () => {
+    const list = vi.fn(async () => ({
+      data: [
+        { id: 1, key: 'Openrouter', type: 'kv-env' },
+        { id: 2, key: 'gcp-sa', type: 'file' },
+        { id: 3, key: 'gh', type: 'oauth' },
+        { id: 4, key: 'empty', type: 'kv-env' },
+      ],
+    }));
+    const get = vi.fn(async (id: number) =>
+      id === 1
+        ? { plaintext: { OPENROUTER_API_KEY: 'sk-or-real-key' } }
+        : id === 4
+          ? { plaintext: {} }
+          : {
+              fileName: 'credentials.json',
+              fileUrl: 'https://files.example.com/credentials.json',
+            },
+    );
+    const inject = vi.fn(async () => ({
+      credentials: { files: [{ envName: 'GOOGLE_APPLICATION_CREDENTIALS', key: 'gcp-sa' }] },
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"a":1}', { status: 200 })));
+    const sandboxService = buildSandboxService();
+
+    const result = await injectCredsIntoOnlyboxesSandbox({
+      ...baseParams,
+      keys: ['Openrouter', 'gcp-sa', 'gh', 'empty'],
+      marketService: buildMarketService({ get, inject, list }),
+      sandboxService,
+    });
+
+    // Written per key, not derived from the flat env map, so multi-key
+    // injections attribute cleanly without re-resolving anything. A key that
+    // injected nothing (unsupported, or empty plaintext) is absent.
+    expect(result.envVarsByKey).toEqual({
+      Openrouter: ['OPENROUTER_API_KEY'],
+      'gcp-sa': ['GOOGLE_APPLICATION_CREDENTIALS'],
+    });
+    expect(result.notFound).toEqual([]);
+    expect(result.unsupportedInSandbox).toEqual(['gh']);
+    expect(result.success).toBe(true);
   });
 
   it('marks non-KV, non-file creds unsupported, never decrypts them, and skips the write', async () => {

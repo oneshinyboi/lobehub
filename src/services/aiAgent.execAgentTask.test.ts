@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { aiAgentService } from './aiAgent';
 
 const mocks = vi.hoisted(() => ({ execAgent: vi.fn(), llmExecutor: vi.fn() }));
+const { flags } = vi.hoisted(() => ({
+  flags: { includeArtboardWorks: false, includeFileWorks: true },
+}));
+
+vi.mock('./workTypeOptIn', () => ({ workTypeOptIn: () => flags }));
 
 vi.mock('@/services/llmRelay', () => ({ buildLlmExecutorDeclaration: mocks.llmExecutor }));
 
@@ -13,20 +18,28 @@ vi.mock('@/libs/trpc/client', () => ({
 describe('aiAgentService.execAgentTask', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    flags.includeArtboardWorks = false;
   });
 
   // The server renames a mirrored group member terminal to `member_runtime_end`
   // only for a client that declares it handles the new event.
-  it('declares that this client handles member_runtime_end', async () => {
+  it('declares the stream features this client handles', async () => {
     mocks.execAgent.mockResolvedValueOnce({ success: true });
     const signal = new AbortController().signal;
 
     await aiAgentService.execAgentTask({ agentId: 'agt-1', prompt: 'hi' }, { signal });
 
     expect(mocks.execAgent).toHaveBeenCalledWith(
-      { agentId: 'agt-1', prompt: 'hi', streamFeatures: ['member_runtime_end'] },
+      { agentId: 'agt-1', prompt: 'hi', streamFeatures: ['file_works', 'member_runtime_end'] },
       { signal },
     );
+  });
+
+  it('declares artboard Works separately when the feature is enabled', async () => {
+    flags.includeArtboardWorks = true;
+    mocks.execAgent.mockResolvedValueOnce({ success: true });
+    await aiAgentService.execAgentTask({ agentId: 'agt-1', prompt: 'hi' });
+    expect(mocks.execAgent.mock.calls[0][0].streamFeatures).toContain('artboard_works');
   });
 
   // Inside the `agent_llm_relay` rollout the tab offers to execute relayed LLM

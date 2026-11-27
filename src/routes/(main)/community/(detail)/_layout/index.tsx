@@ -1,6 +1,7 @@
 'use client';
 
 import { Flexbox } from '@lobehub/ui';
+import * as stylex from '@stylexjs/stylex';
 import { memo } from 'react';
 import { Outlet } from 'react-router';
 
@@ -21,25 +22,28 @@ const DesktopDiscoverDetailLayout = memo(() => {
     <>
       <Header />
       <Flexbox
-        className={styles.mainContainer}
+        className={stylex.props(styles.mainContainer).className}
         height={'100%'}
         id={SCROLL_PARENT_ID}
         width={'100%'}
       >
         <WideScreenContainer
-          className={styles.contentContainer}
-          gap={32}
+          className={stylex.props(styles.contentContainer).className}
+          gap={16}
           minWidth={MAX_WIDTH}
-          paddingBlock={16}
+          style={{ paddingBottom: 56, paddingTop: 16 }}
           wrapperStyle={{
             minHeight: '100%',
             position: 'relative',
           }}
         >
-          <RouteSkeletonChromeProvider>
-            <Outlet />
-          </RouteSkeletonChromeProvider>
-          <div className={styles.spacer} />
+          {/* Same column and spacing as the list layout, so a page opens where its catalog sat. */}
+          <Flexbox gap={16} style={{ paddingBlockEnd: 40 }} width={'100%'}>
+            <RouteSkeletonChromeProvider>
+              <Outlet />
+            </RouteSkeletonChromeProvider>
+          </Flexbox>
+          <div {...stylex.props(styles.spacer)} />
           <Footer />
         </WideScreenContainer>
       </Flexbox>

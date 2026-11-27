@@ -17,6 +17,11 @@ export interface GeneralAgentCallLLMInstructionPayload {
    * placeholder must be filled by this LLM turn rather than orphaned.
    */
   assistantMessageId?: string;
+  /**
+   * Attachments the context engine sends as a preview plus file id, planned by
+   * `shouldCompress` so attachment text fits under the compression threshold.
+   */
+  attachmentPreviewFileIds?: string[];
   /** Force create a new assistant message (e.g., after compression) */
   createAssistantMessage?: boolean;
   isFirstMessage?: boolean;
@@ -29,6 +34,12 @@ export interface GeneralAgentCallLLMInstructionPayload {
 
 export interface GeneralAgentCallLLMResultPayload {
   hasToolsCalling: boolean;
+  /**
+   * The calls in `toolsCalling` that exceed their API's
+   * `maxCallsPerOperation`, with the limit they hit. The agent answers them
+   * with a rejected tool result instead of dispatching them.
+   */
+  overBudgetToolCalls?: Array<{ id: string; limit: number }>;
   parentMessageId: string;
   result: { content: string; tool_calls: MessageToolCall[] };
   toolsCalling: ChatToolPayload[];

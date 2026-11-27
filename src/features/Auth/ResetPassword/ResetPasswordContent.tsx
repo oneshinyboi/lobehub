@@ -1,8 +1,9 @@
-import { Block, Icon } from '@lobehub/ui';
-import { Button, InputPassword, Text } from '@lobehub/ui/base-ui';
-import { Form } from '@lobehub/ui/base-ui/form';
+import { Block, Button, Icon, InputPassword, Text } from '@lobehub/ui';
+import { Form } from '@lobehub/ui/form';
 import { Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import InlineErrorText from '@/components/InlineErrorText';
 
 import { useResetPassword } from './useResetPassword';
 
@@ -18,7 +19,7 @@ export const ResetPasswordContent = ({
   onSuccessRedirect,
 }: ResetPasswordContentProps) => {
   const { t } = useTranslation('auth');
-  const { form, loading } = useResetPassword({
+  const { form, formError, loading } = useResetPassword({
     email,
     onSuccessRedirect,
     token,
@@ -28,7 +29,7 @@ export const ResetPasswordContent = ({
     return (
       <Block padding={24}>
         <Text align={'center'} fontSize={16}>
-          {t('betterAuth.resetPassword.invalidToken')}
+          {t('betterAuth.resetPassword.linkExpired')}
         </Text>
       </Block>
     );
@@ -82,6 +83,7 @@ export const ResetPasswordContent = ({
           }
         />
       </Form.Field>
+      {formError && <InlineErrorText style={{ marginBlockEnd: 12 }}>{formError}</InlineErrorText>}
       <Button block htmlType="submit" loading={loading} size="large" type="primary">
         {t('betterAuth.resetPassword.submit')}
       </Button>

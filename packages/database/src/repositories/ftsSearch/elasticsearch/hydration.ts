@@ -30,10 +30,14 @@ import type { LobeChatDatabase } from '../../../type';
 import { notAgentShareDocument } from '../../../utils/documentVisibility';
 import { libraryVisibleFile, notAgentShareFileReference } from '../../../utils/fileVisibility';
 import { normalizeInboxAgentMeta, normalizeInboxAgentTitle } from '../../../utils/inboxAgent';
+import { isUserKnowledgeBase } from '../../../utils/knowledgeBaseType';
+import { visibleMemoryState } from '../../../utils/memoryVisibility';
 import { searchableMessage } from '../../../utils/searchableMessage';
 import { notShareVisitorMessage, notShareVisitorTopic } from '../../../utils/shareVisitor';
 import { notTrashed } from '../../../utils/softDelete';
+import { notChannelTopic, notChannelTopicRef } from '../../../utils/topicVisibility';
 import { buildWorkspaceWhere } from '../../../utils/workspace';
+import { loadDocumentSnippets } from '../snippet';
 import type {
   FtsSearchAgentResult,
   FtsSearchBackendScope,
@@ -117,6 +121,7 @@ export const hydrateUserMemories = async (
         // Experience memory is retired and has no page to land on; keep it out of unified search.
         ne(userMemories.memoryLayer, LayersEnum.Experience),
         notTrashed(userMemories.isDeleted),
+        visibleMemoryState(userMemories.state),
       ),
     );
 
@@ -282,6 +287,7 @@ export const hydrateTopics = async (
         // from a candidate id to real content, so filtering agent-share visitor
         // topics here is enough to keep them out of the creator's results.
         notShareVisitorTopic(),
+        notChannelTopic(),
         agentId ? eq(topics.agentId, agentId) : undefined,
         visibleParent(topics.agentId, agents.id),
         visibleParent(topics.groupId, chatGroups.id),
@@ -387,6 +393,7 @@ export const hydrateMessages = async (
         searchableMessage(),
         // Twin of the topics guard in `hydrateTopics`.
         notShareVisitorMessage(),
+        notChannelTopicRef(messages.topicId),
         agentId ? eq(messages.agentId, agentId) : undefined,
         visibleParent(messages.agentId, agents.id),
         visibleParent(messages.groupId, chatGroups.id),
@@ -595,7 +602,9 @@ export const hydratePages = async (
   hits: FtsSearchCandidateHit[],
   scope: FtsSearchBackendScope,
   limit: number,
+  query: string,
   excludeKnowledgeBaseIds: string[] = [],
+  excludeFileDerived = false,
 ): Promise<FtsSearchPageResult[]> => {
   if (hits.length === 0) return [];
 
@@ -618,6 +627,9 @@ export const hydratePages = async (
         ),
         buildWorkspaceWhere(scope, documents),
         eq(documents.fileType, 'custom/document'),
+        excludeFileDerived
+          ? or(ne(documents.sourceType, 'file'), isNull(documents.fileId))
+          : undefined,
         notAgentShareDocument(documents.metadata),
         notAgentShareFileReference(db, documents.fileId),
       ),
@@ -635,17 +647,71 @@ export const hydratePages = async (
     return knowledgeBaseIds.every((knowledgeBaseId) => !excluded.has(knowledgeBaseId));
   });
 
-  return attachScores(authorizedRows, hits)
-    .slice(0, limit)
-    .map((row) => ({
-      createdAt: row.createdAt,
-      description: null,
-      id: row.id,
-      relevance: row.relevance,
-      title: row.title || row.filename || 'Untitled',
-      type: 'page' as const,
-      updatedAt: row.updatedAt,
-    }));
+  const selectedRows = attachScores(authorizedRows, hits).slice(0, limit);
+  const snippets = await loadDocumentSnippets(
+    db,
+    selectedRows.map(({ id }) => id),
+    query,
+  );
+
+  return selectedRows.map((row) => ({
+    createdAt: row.createdAt,
+    description: snippets.get(row.id) ?? null,
+    id: row.id,
+    relevance: row.relevance,
+    title: row.title || row.filename || 'Untitled',
+    type: 'page' as const,
+    updatedAt: row.updatedAt,
+  }));
+};
+
+export const hydrateFileContents = async (
+  db: LobeChatDatabase,
+  hits: FtsSearchCandidateHit[],
+  scope: FtsSearchBackendScope,
+  limit: number,
+  query: string,
+  excludeKnowledgeBaseIds: string[] = [],
+): Promise<FtsSearchFileResult[]> => {
+  if (hits.length === 0) return [];
+
+  const documentRows = await db
+    .select({ fileId: documents.fileId, id: documents.id })
+    .from(documents)
+    .where(
+      and(
+        inArray(
+          documents.id,
+          hits.map(({ id }) => id),
+        ),
+        buildWorkspaceWhere(scope, documents),
+        isNotNull(documents.fileId),
+        eq(documents.sourceType, 'file'),
+        ne(documents.fileType, DOCUMENT_FOLDER_TYPE),
+        notAgentShareDocument(documents.metadata),
+      ),
+    );
+  const fileIdByDocument = new Map(documentRows.map(({ fileId, id }) => [id, fileId!]));
+  const documentIdByFile = new Map<string, string>();
+  const fileHits: FtsSearchCandidateHit[] = [];
+  for (const hit of hits) {
+    const fileId = fileIdByDocument.get(hit.id);
+    if (!fileId || documentIdByFile.has(fileId)) continue;
+    documentIdByFile.set(fileId, hit.id);
+    fileHits.push({ ...hit, id: fileId });
+  }
+
+  const items = await hydrateFiles(db, fileHits, scope, limit, excludeKnowledgeBaseIds);
+  const snippets = await loadDocumentSnippets(
+    db,
+    items.map(({ id }) => documentIdByFile.get(id)!),
+    query,
+  );
+
+  return items.map((item) => ({
+    ...item,
+    description: snippets.get(documentIdByFile.get(item.id)!) ?? null,
+  }));
 };
 
 export const hydrateKnowledgeBaseDocuments = async (
@@ -754,6 +820,7 @@ export const hydrateKnowledgeBases = async (
           hits.map(({ id }) => id),
         ),
         buildWorkspaceWhere(scope, knowledgeBases),
+        isUserKnowledgeBase(),
         excludeKnowledgeBaseIds.length > 0
           ? notInArray(knowledgeBases.id, excludeKnowledgeBaseIds)
           : undefined,

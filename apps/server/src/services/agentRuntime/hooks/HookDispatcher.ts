@@ -14,6 +14,7 @@ import { deliverWebhook, executeToolCallWebhook } from './httpWebhook';
 import { matchesHook } from './matcher';
 import { getServerHooks, mergeServerHooks } from './serverHooks';
 import type {
+  AfterToolCallHookEvent,
   AgentHook,
   AgentHookEvent,
   AgentHookType,
@@ -58,13 +59,39 @@ export class HookDispatcher {
    */
   private hooks: Map<string, AgentHook[]> = new Map();
 
+  /** Worker-created tool interceptors; never accepted from or persisted to wire hooks. */
+  private readonly runtimeToolHooks = new Map<string, AgentHook[]>();
+
+  registerRuntimeToolHooks(operationId: string, hooks: AgentHook[]): void {
+    for (const hook of hooks) {
+      if (hook.type !== 'beforeToolCall' || typeof hook.handler !== 'function' || hook.webhook) {
+        throw new Error('Runtime tool hooks must be local beforeToolCall handlers');
+      }
+      if (typeof hook.id !== 'string' || !hook.id) throw new Error('Hook id must be a string');
+      if (hook.matcher !== undefined) agentHookMatcherSchema.parse(hook.matcher);
+    }
+    const byId = new Map(
+      (this.runtimeToolHooks.get(operationId) ?? []).map((hook) => [hook.id, hook]),
+    );
+    for (const hook of hooks) byId.set(hook.id, hook);
+    this.runtimeToolHooks.set(operationId, [...byId.values()]);
+  }
+
+  unregisterRuntimeToolHooks(operationId: string): void {
+    this.runtimeToolHooks.delete(operationId);
+  }
+
   /** Shared by normal dispatch and tool control, including cold-worker recovery. */
-  private resolveHooks(operationId: string, serializedHooks?: SerializedAgentHook[]) {
+  private resolveHooks(
+    operationId: string,
+    serializedHooks?: SerializedAgentHook[],
+    includeServerHooks = true,
+  ) {
     const restored = serializedHooks ? parseSerializedHooks(serializedHooks) : undefined;
     const hooks: (AgentHook | SerializedHook)[] = isQueueAgentRuntimeEnabled()
       ? (restored ?? this.getSerializedHooks(operationId) ?? [])
       : (this.hooks.get(operationId) ?? restored ?? []);
-    return mergeServerHooks(hooks, getServerHooks());
+    return mergeServerHooks(hooks, includeServerHooks ? getServerHooks() : []);
   }
 
   /**
@@ -145,6 +172,17 @@ export class HookDispatcher {
     if (criticalError) throw criticalError;
   }
 
+  /** Includes cold-worker and current environment controls, without invoking a receiver. */
+  hasAfterToolCallControl(
+    operationId: string,
+    serializedHooks?: SerializedAgentHook[],
+    includeServerHooks = true,
+  ): boolean {
+    return this.resolveHooks(operationId, serializedHooks, includeServerHooks).some(
+      (hook) => hook.type === 'afterToolCall' && hook.webhook?.responseHandling === 'toolCall',
+    );
+  }
+
   /** Ordered synchronous controls. Cancellation never goes through onError. */
   async evaluateToolCall(
     operationId: string,
@@ -152,11 +190,40 @@ export class HookDispatcher {
     serializedHooks?: SerializedAgentHook[],
     signal?: AbortSignal,
   ): Promise<{ status: 'allow' | 'blocked' | 'cancelled'; reason?: string }> {
-    const hooks = this.resolveHooks(operationId, serializedHooks);
+    return this.evaluateToolControl('beforeToolCall', operationId, event, serializedHooks, signal);
+  }
+
+  /** Result controls run before archival, persistence, streaming, and model consumption. */
+  async evaluateAfterToolCall(
+    operationId: string,
+    event: AfterToolCallHookEvent,
+    serializedHooks?: SerializedAgentHook[],
+    signal?: AbortSignal,
+    includeServerHooks = true,
+  ): Promise<{ status: 'allow' | 'blocked' | 'cancelled'; reason?: string }> {
+    return this.evaluateToolControl(
+      'afterToolCall',
+      operationId,
+      event,
+      serializedHooks,
+      signal,
+      includeServerHooks,
+    );
+  }
+
+  private async evaluateToolControl(
+    type: 'beforeToolCall' | 'afterToolCall',
+    operationId: string,
+    event: Omit<ToolCallHookEvent, 'mock'> | AfterToolCallHookEvent,
+    serializedHooks?: SerializedAgentHook[],
+    signal?: AbortSignal,
+    includeServerHooks = true,
+  ): Promise<{ status: 'allow' | 'blocked' | 'cancelled'; reason?: string }> {
+    const hooks = this.resolveHooks(operationId, serializedHooks, includeServerHooks);
     for (const hook of hooks) {
       if (signal?.aborted) return { status: 'cancelled' };
       if (
-        hook.type !== 'beforeToolCall' ||
+        hook.type !== type ||
         hook.webhook?.responseHandling !== 'toolCall' ||
         !matchesHook(hook.matcher, event)
       )
@@ -164,16 +231,18 @@ export class HookDispatcher {
       const payload = await this.buildWebhookPayload(
         event,
         {},
-        { hookId: hook.id, hookType: 'beforeToolCall' },
-        { signal },
+        { hookId: hook.id, hookType: type },
+        { preserveToolResult: true, signal },
       );
       if (!payload || signal?.aborted) return { status: 'cancelled' };
       const response = await executeToolCallWebhook(hook.webhook, payload, { signal });
       if (signal?.aborted || response.status === 'cancelled') return { status: 'cancelled' };
+      // A notification response does not decide for any subsequent policy.
+      if (response.status === 'ignored') continue;
       if (response.status === 'success' && response.decision.decision === 'deny') {
         return {
           status: 'blocked',
-          reason: response.decision.reason ?? 'Blocked by beforeToolCall hook.',
+          reason: response.decision.reason || `Blocked by ${type} hook.`,
         };
       }
       if (response.status === 'error') {
@@ -217,6 +286,14 @@ export class HookDispatcher {
     ).catch((error: unknown) => {
       log('[%s][beforeToolCall] Observation delivery rejected: %O', operationId, error);
     });
+    // Trusted interceptors are reconstructed on each worker from server-owned run state.
+    // They remain synchronous in queue mode; errors propagate so the real tool cannot
+    // run when an interceptor fails. Ordinary caller handlers keep their existing rules.
+    for (const hook of this.runtimeToolHooks.get(operationId) ?? []) {
+      if (mockedResult) break;
+      if (matchesHook(hook.matcher, toolCallEvent))
+        await hook.handler!(toolCallEvent as AgentHookEvent);
+    }
     // Legacy local handlers can supply an asynchronous mock. Invoke them once;
     // the first mock stops only handlers, not the independent HTTP observation.
     await this.dispatchHooks(
@@ -253,11 +330,18 @@ export class HookDispatcher {
    * Check if any hooks are registered for an operation
    */
   hasHooks(operationId: string): boolean {
-    return (this.hooks.get(operationId)?.length ?? 0) > 0;
+    return (
+      (this.hooks.get(operationId)?.length ?? 0) +
+        (this.runtimeToolHooks.get(operationId)?.length ?? 0) >
+      0
+    );
   }
 
   hasHook(operationId: string, hookId: string): boolean {
-    return this.hooks.get(operationId)?.some((hook) => hook.id === hookId) ?? false;
+    return [
+      ...(this.hooks.get(operationId) ?? []),
+      ...(this.runtimeToolHooks.get(operationId) ?? []),
+    ].some((hook) => hook.id === hookId);
   }
 
   /**
@@ -334,6 +418,7 @@ export class HookDispatcher {
    */
   unregister(operationId: string): void {
     this.hooks.delete(operationId);
+    this.unregisterRuntimeToolHooks(operationId);
     log('[%s] Unregistered all hooks', operationId);
   }
 }

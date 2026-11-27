@@ -36,7 +36,6 @@ import type { EvidenceRef } from '../types';
 import { buildNightlyReviewSourceId, Risk, Scope } from '../types';
 import type { createServerSelfReviewBriefWriter } from './brief';
 import { createBriefSelfReviewService } from './brief';
-import type { SelfReviewBriefTextTranslator } from './briefText';
 import type {
   FeedbackActivityDigest,
   NightlyReviewManagedSkillSummary,
@@ -53,6 +52,10 @@ import {
   refreshSelfReviewProposal,
   supersedeSelfReviewProposal,
 } from './proposal';
+import {
+  normalizeSelfReviewProposalInput,
+  SELF_REVIEW_PROPOSAL_ACTION_TYPES,
+} from './proposalInput';
 import { createSelfReviewProposalPreflightService } from './proposalPreflight';
 import { createSelfReviewProposalSnapshotService } from './proposalSnapshot';
 import {
@@ -60,6 +63,7 @@ import {
   listNightlyReceiptLocalDates,
   resolveReviewedLocalDate,
 } from './receiptActivity';
+import { claimNightlyReviewTopics } from './topicQuota';
 
 interface ProposalBriefReader {
   listUnresolvedByAgentAndTrigger: (options: {
@@ -420,7 +424,6 @@ const updateSelfReviewProposalBrief = async ({
 export interface ReviewRuntimePrimitiveDeps {
   agentId: string;
   briefModel: BriefModel;
-  briefTextTranslator?: SelfReviewBriefTextTranslator;
   db: LobeChatDatabase;
   localDate: string;
   proposalBriefWriter: ReturnType<typeof createServerSelfReviewBriefWriter>;
@@ -449,7 +452,6 @@ export const createReviewRuntimePrimitives = (
   const {
     agentId,
     briefModel,
-    briefTextTranslator,
     db,
     localDate,
     proposalBriefWriter,
@@ -514,7 +516,9 @@ export const createReviewRuntimePrimitives = (
       });
     },
     createSelfReviewProposal: async (rawInput) => {
-      const input = rawInput as unknown as CreateSelfReviewProposalInput;
+      const input = normalizeSelfReviewProposalInput(
+        rawInput as unknown as CreateSelfReviewProposalInput,
+      );
       const projectionInput = await withCompleteProposalSnapshots({
         agentId,
         input,
@@ -537,12 +541,15 @@ export const createReviewRuntimePrimitives = (
         result: projection.execution,
         reviewWindowEnd,
         reviewWindowStart,
-        t: briefTextTranslator,
         timezone: 'UTC',
         userId,
       });
 
-      if (!brief) throw new Error('Self-review proposal projection produced no brief');
+      if (!brief) {
+        throw new Error(
+          `Self-review proposal has no applicable action. Each action needs actionType set to one of: ${SELF_REVIEW_PROPOSAL_ACTION_TYPES.join(', ')}.`,
+        );
+      }
 
       const result = await proposalBriefWriter.writeDailyBrief(brief);
 
@@ -791,6 +798,9 @@ export const createServerSelfReviewPolicyOptions = ({
   const briefModel = new BriefModel(db, userId, workspaceId);
   const skillDocumentService = new SkillManagementDocumentService(db, userId, workspaceId);
   const collector = createSelfReviewContextService({
+    // One Redis set per user and local review date bounds the topics every agent's review
+    // (and the nightly expertise pass) may process that night.
+    claimTopics: claimNightlyReviewTopics,
     listDocumentActivity: async ({ agentId: targetAgentId, reviewWindowEnd, reviewWindowStart }) =>
       tracer.startActiveSpan(
         'agent_signal.nightly_review.collector.list_document_activity',

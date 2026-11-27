@@ -2,9 +2,22 @@
 import { RequestTrigger } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { runWithLlmRelayRequest } from '@/server/modules/AgentRuntime/llmRelay/requestScope';
 import * as ModelRuntimeModule from '@/server/modules/ModelRuntime';
 
 import { AiGenerationService } from './index';
+
+const resolveProviderRelay = vi.hoisted(() => vi.fn());
+vi.mock('@/server/modules/AgentRuntime/llmRelay/resolveLlmExecutionSite', () => ({
+  resolveProviderRelay,
+}));
+// A deployment that can relay (Agent Gateway + Redis); one that cannot keeps
+// calling the provider from the server.
+vi.mock('@/server/modules/AgentRuntime/redis', () => ({ getAgentRuntimeRedisClient: () => ({}) }));
+vi.mock('@/server/modules/AgentRuntime/factory', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createStreamEventManager: () => ({ openLlmRelayChannel: vi.fn(), sendLlmExecute: vi.fn() }),
+}));
 
 describe('AiGenerationService.generateObject', () => {
   const generateObject = vi.fn();
@@ -27,7 +40,7 @@ describe('AiGenerationService.generateObject', () => {
       },
       { metadata: { trigger: RequestTrigger.Chat } },
     );
-    expect(initSpy).toHaveBeenCalledWith({}, 'user-1', 'openai');
+    expect(initSpy).toHaveBeenCalledWith({}, 'user-1', 'openai', undefined);
   });
 
   it('forwards messages / model / schema / tools / thinking verbatim to the runtime', async () => {
@@ -98,5 +111,159 @@ describe('AiGenerationService.generateObject', () => {
       { metadata: { trigger: RequestTrigger.Chat } },
     );
     expect(result.completion).toBe('hello world');
+  });
+});
+
+describe('AiGenerationService.generateObject with a device-only provider', () => {
+  const initSpy = vi.spyOn(ModelRuntimeModule, 'initModelRuntimeFromDB');
+
+  beforeEach(() => {
+    initSpy.mockReset();
+    resolveProviderRelay.mockReset();
+    resolveProviderRelay.mockResolvedValue({ runtimeProvider: 'ollama' });
+  });
+
+  const generate = () =>
+    new AiGenerationService({} as any, 'user-1').generateObject(
+      { messages: [{ content: 'hi', role: 'user' }], model: 'qwen3:1.7b', provider: 'ollama' },
+      { metadata: { trigger: RequestTrigger.TopicSummary } },
+    );
+
+  // Topic auto summary, task lifecycle, verify: a workflow or a hook with no
+  // browser tab. The server cannot reach the user's local model, so it must
+  // not try — it fails at once, before any provider call.
+  it('fails at once with no_executor in background work (no browser tab)', async () => {
+    await expect(generate()).rejects.toMatchObject({
+      error: { context: 'no_client_request', reason: 'no_executor' },
+      errorType: 'ClientLlmExecutorUnavailable',
+    });
+    expect(initSpy).not.toHaveBeenCalled();
+  });
+
+  it('never relays to a request that named a channel the user does not own', async () => {
+    await expect(
+      runWithLlmRelayRequest(
+        { channel: 'llmcall:someone-else:0b7c1d2e-aaaa', clientId: 'tab-1' },
+        'user-1',
+        generate,
+      ),
+    ).rejects.toMatchObject({ error: { reason: 'no_executor' } });
+  });
+});
+
+describe('AiGenerationService.decide', () => {
+  const decide = vi.fn();
+  const initSpy = vi.spyOn(ModelRuntimeModule, 'initModelRuntimeFromDB');
+
+  beforeEach(() => {
+    decide.mockReset();
+    initSpy.mockReset();
+    resolveProviderRelay.mockReset();
+    initSpy.mockResolvedValue({ decide } as any);
+  });
+
+  it('calls the decision model from the server, never through the device relay', async () => {
+    const response = { answers: { ok: { probability: 0.9, type: 'boolean' } }, model: 'jev' };
+    decide.mockResolvedValue(response);
+    const questions = { ok: { instructions: 'Is it ok?', type: 'boolean' as const } };
+
+    const ai = new AiGenerationService({} as any, 'user-1', 'ws-1');
+    const result = await ai.decide(
+      { model: 'jev-1.14.0', provider: 'lobehub', questions, state: 'state' },
+      { metadata: { trigger: RequestTrigger.Cli }, tracing: { scenario: 'replay' } },
+    );
+
+    expect(resolveProviderRelay).not.toHaveBeenCalled();
+    expect(initSpy).toHaveBeenCalledWith({}, 'user-1', 'lobehub', 'ws-1');
+    expect(decide).toHaveBeenCalledWith(
+      { model: 'jev-1.14.0', questions, state: 'state' },
+      {
+        metadata: { trigger: RequestTrigger.Cli },
+        signal: undefined,
+        tracing: { scenario: 'replay' },
+      },
+    );
+    expect(result).toBe(response);
+  });
+});
+
+describe('AiGenerationService.generateText', () => {
+  const chat = vi.fn();
+  const initSpy = vi.spyOn(ModelRuntimeModule, 'initModelRuntimeFromDB');
+
+  /** A runtime whose stream calls the given callbacks once it is drained. */
+  const streamWith = (emit: (callback: any) => void) =>
+    chat.mockImplementation(
+      async (_payload: unknown, options: { callback: any }) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: "x"\n\n'));
+              emit(options.callback);
+              controller.close();
+            },
+          }),
+        ),
+    );
+
+  beforeEach(() => {
+    chat.mockReset();
+    initSpy.mockReset();
+    initSpy.mockResolvedValue({ chat } as any);
+  });
+
+  it('streams one completion and returns the text with reasoning kept apart', async () => {
+    streamWith((callback) =>
+      callback.onFinal({
+        finishReason: 'stop',
+        text: 'Pegboard',
+        thinking: 'One word is enough.',
+        usage: { totalTokens: 9 },
+      }),
+    );
+
+    const ai = new AiGenerationService({} as any, 'user-1', 'ws-1');
+    const result = await ai.generateText(
+      {
+        maxTokens: 20,
+        messages: [{ content: 'one word?', role: 'user' }],
+        model: 'deepseek-flash',
+        provider: 'lobehub',
+        temperature: 0,
+      },
+      { metadata: { trigger: RequestTrigger.Api } },
+    );
+
+    expect(initSpy).toHaveBeenCalledWith({}, 'user-1', 'lobehub', 'ws-1');
+    expect(chat.mock.calls[0][0]).toEqual({
+      max_tokens: 20,
+      messages: [{ content: 'one word?', role: 'user' }],
+      model: 'deepseek-flash',
+      stream: true,
+      temperature: 0,
+    });
+    expect(chat.mock.calls[0][1].metadata).toEqual({ trigger: RequestTrigger.Api });
+    expect(result).toEqual({
+      finishReason: 'stop',
+      reasoning: 'One word is enough.',
+      text: 'Pegboard',
+      usage: { totalTokens: 9 },
+    });
+  });
+
+  it('throws the stream error instead of returning partial text', async () => {
+    const failure = { errorType: 'ProviderBizError' };
+    streamWith((callback) => {
+      callback.onError(failure);
+      callback.onFinal({ text: 'partial' });
+    });
+
+    const ai = new AiGenerationService({} as any, 'user-1');
+    await expect(
+      ai.generateText(
+        { messages: [{ content: 'hi', role: 'user' }], model: 'm', provider: 'p' },
+        { metadata: { trigger: RequestTrigger.Api } },
+      ),
+    ).rejects.toBe(failure);
   });
 });

@@ -6,7 +6,9 @@ import {
   extractActivatedSkillsFromMessages,
   extractActivatedToolIdsFromMessages,
   extractTodosFromMessages,
+  extractToolActivationsFromMessages,
   findInMessages,
+  hasHistoricalToolInvocation,
   normalizeTodosState,
 } from './messageSelectors';
 
@@ -107,10 +109,12 @@ describe('TODO state selectors', () => {
   const item = { status: 'processing' as const, text: 'Ship the fix' };
 
   it('normalizes canonical and legacy states, including empty clear tombstones', () => {
-    expect(normalizeTodosState({ items: [item], updatedAt: 'canonical-time' }, 'fallback')).toEqual({
-      items: [item],
-      updatedAt: 'canonical-time',
-    });
+    expect(normalizeTodosState({ items: [item], updatedAt: 'canonical-time' }, 'fallback')).toEqual(
+      {
+        items: [item],
+        updatedAt: 'canonical-time',
+      },
+    );
     expect(normalizeTodosState([item], 'fallback')).toEqual({
       items: [item],
       updatedAt: 'fallback',
@@ -129,7 +133,9 @@ describe('TODO state selectors', () => {
   it('rejects alternate fields and malformed items', () => {
     expect(normalizeTodosState({ tasks: [item] }, 'fallback')).toBeUndefined();
     expect(normalizeTodosState({ todoList: [item] }, 'fallback')).toBeUndefined();
-    expect(normalizeTodosState({ items: [{ status: 'unknown', text: 'bad' }] }, 'fallback')).toBeUndefined();
+    expect(
+      normalizeTodosState({ items: [{ status: 'unknown', text: 'bad' }] }, 'fallback'),
+    ).toBeUndefined();
     expect(normalizeTodosState({ items: [{ status: 'todo' }] }, 'fallback')).toBeUndefined();
   });
 
@@ -483,6 +489,7 @@ describe('extractActivatedToolIdsFromMessages', () => {
     const messages = [
       createToolMessage({
         plugin: { apiName: 'activateTools', identifier: 'lobe-activator' },
+        tool_call_id: 'first',
         pluginState: {
           activatedTools: [{ identifier: 'lobe-task' }, { identifier: 'lobe-calendar' }],
         },
@@ -493,6 +500,10 @@ describe('extractActivatedToolIdsFromMessages', () => {
       } as any),
     ];
 
+    expect(extractToolActivationsFromMessages(messages)).toEqual([
+      { id: 'lobe-task', afterToolCallId: 'first' },
+      { id: 'lobe-calendar', afterToolCallId: 'first' },
+    ]);
     expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-task', 'lobe-calendar']);
   });
 
@@ -521,7 +532,9 @@ describe('extractActivatedToolIdsFromMessages', () => {
       } as any),
     ];
 
-    expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-task']);
+    expect(extractToolActivationsFromMessages(messages)).toEqual([
+      { id: 'lobe-task', afterToolCallId: 'call-1' },
+    ]);
   });
 
   it('should ignore failed or unrelated tool results', () => {
@@ -537,5 +550,156 @@ describe('extractActivatedToolIdsFromMessages', () => {
     ];
 
     expect(extractActivatedToolIdsFromMessages(messages)).toBeUndefined();
+  });
+});
+
+describe('flat tool rows inside compressedGroup compressedMessages', () => {
+  // The capped compression read path puts the state-bearing rows of members it
+  // does not hydrate here as flat tool rows; released clients rely on this.
+  it('restores activated tools, skills and todos from flat tool rows', () => {
+    const todos = { items: [{ status: 'todo', text: 'old' }], updatedAt: 'old' };
+    const messages = [
+      createMessage({
+        compressedMessages: [
+          createToolMessage({
+            plugin: { apiName: 'activateTools', identifier: 'lobe-activator' },
+            pluginState: { activatedTools: [{ identifier: 'lobe-task' }] },
+          } as any),
+          createToolMessage({
+            plugin: { apiName: 'activateSkill', identifier: 'lobe-skills' },
+            pluginState: { id: 'skl_old', name: 'xlsx' },
+          } as any),
+          createToolMessage({ pluginState: { todos } }),
+        ],
+        role: 'compressedGroup',
+      } as any),
+    ];
+
+    expect(extractActivatedToolIdsFromMessages(messages)).toEqual(['lobe-task']);
+    expect(extractActivatedSkillsFromMessages(messages)).toEqual([
+      { description: undefined, id: 'skl_old', name: 'xlsx' },
+    ]);
+    expect(extractTodosFromMessages(messages)).toEqual(todos);
+  });
+});
+
+describe('hasHistoricalToolInvocation', () => {
+  it('returns false when messages contain no matching tool invocations', () => {
+    const messages = [
+      createMessage({ content: 'hello', role: 'user' }),
+      createToolMessage({
+        plugin: { apiName: 'search', identifier: 'lobe-web-browsing' },
+      } as any),
+    ];
+
+    expect(hasHistoricalToolInvocation(messages, 'lobe-skills')).toBe(false);
+  });
+
+  it('detects flat tool messages, assistant tools/tool_calls, assistantGroup children, and compressedGroup entries', () => {
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          createToolMessage({
+            plugin: { apiName: 'activateSkill', identifier: 'lobe-skills' },
+          } as any),
+        ],
+        'lobe-skills',
+      ),
+    ).toBe(true);
+
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          createMessage({
+            role: 'assistant',
+            tools: [{ apiName: 'execScript', id: 'tc-1', identifier: 'lobe-skills' }],
+          } as any),
+        ],
+        'lobe-skills',
+      ),
+    ).toBe(true);
+
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          createMessage({
+            role: 'assistant',
+            tool_calls: [{ function: { name: 'lobe-skills____runCommand' }, id: 'tc-2' }],
+          } as any),
+        ],
+        'lobe-skills',
+      ),
+    ).toBe(true);
+
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          createMessage({
+            children: [
+              { tools: [{ apiName: 'readReference', id: 'tc-3', identifier: 'lobe-skills' }] },
+            ],
+            role: 'assistantGroup',
+          } as any),
+        ],
+        'lobe-skills',
+      ),
+    ).toBe(true);
+
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          createMessage({
+            compressedMessages: [
+              createMessage({
+                role: 'assistant',
+                tools: [{ apiName: 'activateSkill', id: 'tc-4', identifier: 'lobe-skills' }],
+              } as any),
+            ],
+            role: 'compressedGroup',
+          } as any),
+        ],
+        'lobe-skills',
+      ),
+    ).toBe(true);
+  });
+
+  it('limits the match to the given API names', () => {
+    const skillApis = new Set(['activateSkill', 'execScript', 'readReference']);
+    const shellOnly = [
+      createToolMessage({
+        plugin: { apiName: 'runCommand', identifier: 'lobe-skills' },
+      } as any),
+      createMessage({
+        role: 'assistant',
+        tool_calls: [{ function: { name: 'lobe-skills____exportFile' }, id: 'tc-1' }],
+        tools: [{ apiName: 'runCommand', id: 'tc-2', identifier: 'lobe-skills' }],
+      } as any),
+    ];
+
+    expect(hasHistoricalToolInvocation(shellOnly, 'lobe-skills')).toBe(true);
+    expect(hasHistoricalToolInvocation(shellOnly, 'lobe-skills', skillApis)).toBe(false);
+
+    expect(
+      hasHistoricalToolInvocation(
+        [
+          ...shellOnly,
+          createMessage({
+            role: 'assistant',
+            tool_calls: [{ function: { name: 'lobe-skills____execScript' }, id: 'tc-3' }],
+          } as any),
+        ],
+        'lobe-skills',
+        skillApis,
+      ),
+    ).toBe(true);
+
+    // A row that did not record its API cannot be ruled out.
+    expect(
+      hasHistoricalToolInvocation(
+        [createToolMessage({ plugin: { identifier: 'lobe-skills' } } as any)],
+        'lobe-skills',
+        skillApis,
+      ),
+    ).toBe(true);
   });
 });

@@ -1,13 +1,22 @@
 import { CUSTOM_FOLDER_FILE_TYPE } from '@lobechat/const';
-import { Flexbox, Icon } from '@lobehub/ui';
-import { Button, createModal, ModalFooter, toast, useModalContext } from '@lobehub/ui/base-ui';
+import {
+  Button,
+  createModal,
+  Flexbox,
+  Icon,
+  ModalFooter,
+  toast,
+  useModalContext,
+} from '@lobehub/ui';
 import { t as translate } from 'i18next';
 import { FolderIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { type FolderTreeItem } from '@/features/ResourceManager/components/FolderTree';
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import FolderTree from '@/features/ResourceManager/components/FolderTree';
+import { type FolderTreeItem } from '@/features/ResourceManager/components/FolderTree';
 import { fileService } from '@/services/file';
 import { useFileStore } from '@/store/file';
 import { useTreeStore } from '@/store/tree';
@@ -28,6 +37,7 @@ const MoveToFolderModalContent = memo<MoveToFolderModalContentProps>(
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
     const [loadedFolders, setLoadedFolders] = useState<Set<string>>(() => new Set());
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+    const [createFolderError, setCreateFolderError] = useState<InlineErrorState | null>(null);
 
     const createFolder = useFileStore((s) => s.createFolder);
     const moveItem = useTreeStore((s) => s.moveItem);
@@ -184,6 +194,7 @@ const MoveToFolderModalContent = memo<MoveToFolderModalContentProps>(
     const handleCreateNewFolder = useCallback(async () => {
       try {
         setIsCreatingFolder(true);
+        setCreateFolderError(null);
 
         // Create folder with default "Untitled" name
         const newFolderId = await createFolder(
@@ -206,7 +217,9 @@ const MoveToFolderModalContent = memo<MoveToFolderModalContentProps>(
         setSelectedFolderId(newFolderId);
       } catch (error) {
         console.error('Failed to create folder:', error);
-        toast.error(t('FileManager.actions.renameError'));
+        setCreateFolderError(
+          toInlineError(t('FileManager.actions.createFolderFailedRetry'), error),
+        );
       } finally {
         setIsCreatingFolder(false);
       }
@@ -289,6 +302,13 @@ const MoveToFolderModalContent = memo<MoveToFolderModalContentProps>(
               />
             )}
           </Flexbox>
+          {createFolderError && (
+            <div style={{ marginTop: 12 }}>
+              <InlineErrorText detail={createFolderError.detail}>
+                {createFolderError.summary}
+              </InlineErrorText>
+            </div>
+          )}
         </Flexbox>
         <ModalFooter>
           <Button onClick={close}>{t('cancel', { ns: 'common' })}</Button>

@@ -1,20 +1,23 @@
 'use client';
 
 import { OFFICIAL_URL } from '@lobechat/const';
-import { Center, Flexbox, Icon, Tooltip } from '@lobehub/ui';
 import {
   Accordion,
   Button,
+  Center,
+  cssVar,
+  Flexbox,
+  Icon,
   Input,
   Spin,
   Text,
   TextArea,
   toast,
+  Tooltip,
   Upload,
   useModalContext,
-} from '@lobehub/ui/base-ui';
-import { Form, useForm, useWatch } from '@lobehub/ui/base-ui/form';
-import { cssVar } from 'antd-style';
+} from '@lobehub/ui';
+import { Form, useForm, useWatch } from '@lobehub/ui/form';
 import { CircleHelp, Globe, ImagePlus, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -26,8 +29,12 @@ import {
   updateCommunityWorkspaceProfile,
 } from '@/business/client/services/communityWorkspaceProfile';
 import AvatarUpload from '@/components/AvatarUpload';
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import { useFileStore } from '@/store/file';
 import type { DiscoverUserInfo } from '@/types/discover';
+
+import { getNamespaceError, isNamespaceFormatValid, isWebsiteUrlValid } from './validation';
 
 interface FormValues {
   description?: string;
@@ -58,14 +65,6 @@ const normalizeNamespace = (value: string) =>
     .replaceAll(/^-|-$/g, '')
     .slice(0, 32);
 
-// Mirrors the namespace Form rules below — only run the live availability check
-// once the handle is well-formed, so we don't probe Market for invalid input.
-const NAMESPACE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-const isNamespaceFormatValid = (value: string) =>
-  value.length >= 3 && value.length <= 32 && NAMESPACE_PATTERN.test(value);
-
-const URL_PATTERN = /^(?:(?:[a-z]+:)?\/\/|www\.)\S+$/i;
-
 type NamespaceAvailability = 'available' | 'checking' | 'idle' | 'taken';
 
 export const Content = memo<ContentProps>(({ user, onSuccess }) => {
@@ -86,6 +85,13 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
   const [bannerUrl, setBannerUrl] = useState<string | null>(user.bannerUrl ?? null);
   const [bannerUploading, setBannerUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  /**
+   * Upload and save failures render beside the control that caused them: the modal stays
+   * open, so a corner toast would sit far from the avatar / banner / Save button.
+   */
+  const [avatarError, setAvatarError] = useState('');
+  const [bannerError, setBannerError] = useState<InlineErrorState | null>(null);
+  const [saveError, setSaveError] = useState<InlineErrorState | null>(null);
   const isSetup = !user.namespace;
 
   // Live namespace-availability check (setup only — the handle is immutable once
@@ -129,15 +135,23 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
     return (
       <Flexbox horizontal align="center" gap={6} style={{ color, fontSize: 12 }}>
         {namespaceAvailability === 'checking' && <Spin size={13} />}
-        {t(`user.workspaceProfile.fields.namespace.${namespaceAvailability}` as any)}
+        {
+          // Static keys, so type-check fails if a status loses its copy.
+          {
+            available: t('user.workspaceProfile.fields.namespace.available'),
+            checking: t('user.workspaceProfile.fields.namespace.checking'),
+            taken: t('user.workspaceProfile.fields.namespace.taken'),
+          }[namespaceAvailability]
+        }
       </Flexbox>
     );
   }, [isSetup, namespaceAvailability, t]);
 
   const handleAvatarUpload = useCallback(
     async (file: File) => {
+      setAvatarError('');
       if (file.size > MAX_FILE_SIZE) {
-        toast.error(t('user.workspaceProfile.errors.fileTooLarge'));
+        setAvatarError(t('user.workspaceProfile.errors.fileTooLarge'));
         return;
       }
 
@@ -145,7 +159,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
       try {
         const result = await uploadWithProgress({ file });
         if (!result?.url) {
-          toast.error(t('user.workspaceProfile.errors.uploadFailed'));
+          setAvatarError(t('user.workspaceProfile.errors.uploadFailedRetry'));
           return;
         }
         setAvatarUrl(
@@ -153,7 +167,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
         );
       } catch (error) {
         console.error('[WorkspaceProfileModal] Avatar upload failed:', error);
-        toast.error(t('user.workspaceProfile.errors.uploadFailed'));
+        setAvatarError(t('user.workspaceProfile.errors.uploadFailedRetry'));
       } finally {
         setAvatarUploading(false);
       }
@@ -163,8 +177,9 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
 
   const handleBannerUpload = useCallback(
     async (file: File) => {
+      setBannerError(null);
       if (file.size > MAX_FILE_SIZE) {
-        toast.error(t('user.workspaceProfile.errors.fileTooLarge'));
+        setBannerError(toInlineError(t('user.workspaceProfile.errors.fileTooLarge')));
         return;
       }
 
@@ -172,7 +187,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
       try {
         const result = await uploadWithProgress({ file });
         if (!result?.url) {
-          toast.error(t('user.workspaceProfile.errors.uploadFailed'));
+          setBannerError(toInlineError(t('user.workspaceProfile.errors.uploadFailedRetry')));
           return;
         }
         const url = result.url.startsWith('/')
@@ -181,7 +196,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
         setBannerUrl(url);
       } catch (error) {
         console.error('[WorkspaceProfileModal] Banner upload failed:', error);
-        toast.error(t('user.workspaceProfile.errors.uploadFailed'));
+        setBannerError(toInlineError(t('user.workspaceProfile.errors.uploadFailedRetry'), error));
       } finally {
         setBannerUploading(false);
       }
@@ -196,11 +211,10 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
     if (!valid) return;
     const values = form.getValues();
 
-    if (isSetup && namespaceAvailability === 'taken') {
-      toast.error(t('user.workspaceProfile.fields.namespace.taken'));
-      return;
-    }
+    // The namespace field already shows the red "taken" status and the Save button is disabled.
+    if (isSetup && namespaceAvailability === 'taken') return;
 
+    setSaveError(null);
     setLoading(true);
     try {
       const profile = {
@@ -230,12 +244,10 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
       // Surface a namespace conflict (e.g. the handle was claimed between the
       // live check and submit) as a taken-handle message instead of a generic one.
       if (isSetup && isCommunityWorkspaceNamespaceTakenError(error)) {
+        // Rendered as the red status under the namespace field (namespaceStatusNode)
         setNamespaceAvailability('taken');
-        toast.error(t('user.workspaceProfile.fields.namespace.taken'));
       } else {
-        toast.error(
-          t(isSetup ? 'user.workspaceProfile.setup.failed' : 'user.workspaceProfile.failed'),
-        );
+        setSaveError(toInlineError(t('user.workspaceProfile.errors.saveFailed'), error));
       }
     } finally {
       setLoading(false);
@@ -249,7 +261,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
           label={t('user.workspaceProfile.fields.websiteUrl')}
           name="websiteUrl"
           validate={(value?: string) =>
-            value && !URL_PATTERN.test(value) ? t('user.workspaceProfile.errors.url') : undefined
+            value && !isWebsiteUrlValid(value) ? t('user.workspaceProfile.errors.url') : undefined
           }
         >
           <Input
@@ -323,6 +335,9 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
                 </Center>
               </div>
             </Upload>
+            {bannerError && (
+              <InlineErrorText detail={bannerError.detail}>{bannerError.summary}</InlineErrorText>
+            )}
             {bannerUrl && (
               <Flexbox horizontal align="center" gap={8} justify="flex-end">
                 <Text
@@ -347,7 +362,7 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
         </Form.Field>
       </>
     ),
-    [bannerUploading, bannerUrl, handleBannerUpload, t],
+    [bannerError, bannerUploading, bannerUrl, handleBannerUpload, t],
   );
 
   return (
@@ -373,15 +388,22 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
             </Form.Field>
           </Flexbox>
 
-          <AvatarUpload
-            allowDelete={!!avatarUrl}
-            loading={avatarUploading}
-            shape="square"
-            size={80}
-            value={avatarUrl || undefined}
-            onDelete={() => setAvatarUrl(null)}
-            onUpload={handleAvatarUpload}
-          />
+          <Flexbox align="center" gap={6} style={{ maxWidth: 120 }}>
+            <AvatarUpload
+              allowDelete={!!avatarUrl}
+              loading={avatarUploading}
+              shape="square"
+              size={80}
+              value={avatarUrl || undefined}
+              onDelete={() => setAvatarUrl(null)}
+              onUpload={handleAvatarUpload}
+            />
+            {avatarError && (
+              <Text style={{ color: cssVar.colorError, fontSize: 12, textAlign: 'center' }}>
+                {avatarError}
+              </Text>
+            )}
+          </Flexbox>
         </Flexbox>
 
         {isSetup && (
@@ -392,10 +414,8 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
             required={t('user.workspaceProfile.errors.namespace.required')}
             validate={(value?: string) => {
               if (!value) return;
-              if (value.length < 3 || value.length > 32)
-                return t('user.workspaceProfile.errors.namespace.length');
-              if (!NAMESPACE_PATTERN.test(value))
-                return t('user.workspaceProfile.errors.namespace.pattern');
+              const error = getNamespaceError(value);
+              if (error) return t(`user.workspaceProfile.errors.namespace.${error}`);
             }}
           >
             <Input
@@ -440,6 +460,9 @@ export const Content = memo<ContentProps>(({ user, onSuccess }) => {
         />
       </Form>
 
+      {saveError && (
+        <InlineErrorText detail={saveError.detail}>{saveError.summary}</InlineErrorText>
+      )}
       <Flexbox horizontal gap={8} justify="flex-end">
         <Button disabled={loading} onClick={close}>
           {t('user.workspaceProfile.cancel')}

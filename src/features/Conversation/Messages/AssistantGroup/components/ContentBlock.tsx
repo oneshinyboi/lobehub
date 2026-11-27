@@ -1,17 +1,21 @@
 import { Flexbox } from '@lobehub/ui';
+import isEqual from 'fast-deep-equal';
 import { memo, useCallback } from 'react';
 
 import AssistantMessageNotice from '@/business/client/components/AssistantMessageNotice';
 import SafeBoundary from '@/components/ErrorBoundary';
 import { LOADING_FLAT } from '@/const/message';
 import ErrorMessageExtra, { useErrorContent } from '@/features/Conversation/Error';
+import { useDensity } from '@/styles/density';
 
 import ErrorContent from '../../../ChatItem/components/ErrorContent';
 import { dataSelectors, messageStateSelectors, useConversationStore } from '../../../store';
 import ImageFileListViewer from '../../components/ImageFileListViewer';
 import Reasoning, { hasRenderableReasoning } from '../../components/Reasoning';
 import { Tools } from '../Tools';
+import { resolveTaskCompletionSource } from '../utils/taskCompletionSource';
 import MessageContent from './MessageContent';
+import TaskCompletionNotice from './TaskCompletionNotice';
 import type { RenderableAssistantContentBlock } from './types';
 
 interface ContentBlockProps extends RenderableAssistantContentBlock {
@@ -34,8 +38,10 @@ const ContentBlock = memo<ContentBlockProps>(
     hasToolsOverride,
     metadata,
     projectionKey,
+    showTaskCompletionNotice,
   }) => {
     const errorContent = useErrorContent(error);
+    const { compact } = useDensity();
     const showImageItems = !!imageList && imageList.length > 0;
     const [isReasoning, retryFailedAssistantStep] = useConversationStore((s) => [
       messageStateSelectors.isMessageInReasoning(id)(s),
@@ -48,9 +54,21 @@ const ContentBlock = memo<ContentBlockProps>(
     );
     /** The persisted reason may arrive after the grouped projection without changing its props. */
     const persistedFinishType = useConversationStore(
-      (s) => s.dbMessages.find((message) => message.id === id)?.metadata?.finishType,
+      (s) => dataSelectors.getDbMessageById(id)(s)?.metadata?.finishType,
     );
     const finishType = metadata?.finishType ?? persistedFinishType;
+    // The call that launched the finished task can sit in an earlier step or
+    // an earlier steered turn, so look it up across the topic's messages.
+    const taskCompletionSource = useConversationStore(
+      (s) =>
+        showTaskCompletionNotice
+          ? resolveTaskCompletionSource({ metadata }, s.dbMessages)
+          : undefined,
+      isEqual,
+    );
+    const taskCompletionNotice = taskCompletionSource && (
+      <TaskCompletionNotice {...taskCompletionSource} />
+    );
     const hasTools = !!tools?.length;
     const showReasoning = hasRenderableReasoning(reasoning) || (!reasoning && isReasoning);
     const hasContent = !!content && content !== LOADING_FLAT;
@@ -86,7 +104,14 @@ const ContentBlock = memo<ContentBlockProps>(
     // Nothing was streamed before the turn died: the error stands in for the
     // whole block.
     if (error && (content === LOADING_FLAT || !content)) {
-      return errorBlock;
+      return taskCompletionNotice ? (
+        <Flexbox gap={8}>
+          {taskCompletionNotice}
+          {errorBlock}
+        </Flexbox>
+      ) : (
+        errorBlock
+      );
     }
 
     // A freshly created step block can mount before anything about it is
@@ -99,7 +124,9 @@ const ContentBlock = memo<ContentBlockProps>(
     }
 
     return (
-      <Flexbox gap={8} id={domId ?? id}>
+      <Flexbox gap={compact ? 4 : 8} id={domId ?? id}>
+        {taskCompletionNotice}
+
         {showReasoning && (
           <SafeBoundary>
             <Reasoning {...reasoning} id={id} />

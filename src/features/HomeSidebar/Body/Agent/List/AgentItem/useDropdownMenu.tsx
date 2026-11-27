@@ -1,18 +1,17 @@
-import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
+import { INBOX_SESSION_ID } from '@lobechat/const';
 import {
+  agentRenameField,
   SessionDefaultGroup,
   type SidebarAgentLabel,
   type SidebarVisibility,
 } from '@lobechat/types';
-import { type MenuProps } from '@lobehub/ui';
-import { Icon } from '@lobehub/ui';
-import { confirmModal, toast } from '@lobehub/ui/base-ui';
+import { type DropdownItem } from '@lobehub/ui';
+import { Icon, toast } from '@lobehub/ui';
 import isEqual from 'fast-deep-equal';
 import {
   Check,
   EyeOffIcon,
   FolderInputIcon,
-  GlobeIcon,
   LucideCopy,
   LucidePlus,
   Pen,
@@ -20,39 +19,32 @@ import {
   Pin,
   PinOff,
   Settings2Icon,
+  ShieldIcon,
   TagIcon,
   Trash,
-  UsersIcon,
 } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
 import { useAgentTransferMenuItem } from '@/business/client/hooks/useAgentTransferMenuItem';
-import { useAgentTransferToMemberMenuItem } from '@/business/client/hooks/useAgentTransferToMemberMenuItem';
-import { openEditingPopover } from '@/features/EditingPopover/store';
+import { openRenameModal } from '@/components/RenameModal';
+import { confirmRemoveAgent } from '@/features/AgentDeleteConfirm';
 import { useOptionalAgentModal } from '@/features/HomeSidebar/Body/Agent/ModalProvider';
 import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
-import VisibilityConfirmContent from '@/features/VisibilityConfirmContent';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { useCopyAgentIdMenuItem } from '@/hooks/useCopyAgentIdMenuItem';
 import { usePermission } from '@/hooks/usePermission';
 import { useResourceManageable } from '@/hooks/useResourceManageable';
-import { agentService } from '@/services/agent';
 import { useGlobalStore } from '@/store/global';
 import { useHomeStore } from '@/store/home';
 import { agentLabelSelectors, homeAgentListSelectors } from '@/store/home/selectors';
-import { useUserStore } from '@/store/user';
-import { userProfileSelectors } from '@/store/user/selectors';
 import { getDeleteErrorMessageKey } from '@/utils/forbiddenError';
 
-import { useRevealSidebarSection } from '../../../../hooks';
 import { useSidebarItemVisibility } from '../../useSidebarItemVisibility';
-import { getAgentPublishErrorKey } from './agentMenuVisibility';
-
-const BUILTIN_SLUGS = new Set<string>(Object.values(BUILTIN_AGENT_SLUGS));
+import { useSidebarPinMenuItems } from '../../useSidebarPinMenuItems';
 
 interface UseAgentDropdownMenuParams {
-  anchor: HTMLElement | null;
   avatar?: string;
   backgroundColor?: string;
   group: string | undefined;
@@ -65,6 +57,8 @@ interface UseAgentDropdownMenuParams {
    * surfaces on the agents list page (ItemActions), where labels render.
    */
   labelsEnabled?: boolean;
+  /** The agent's personal name — the row label is this when set, the role otherwise. */
+  name?: string | null;
   openCreateGroupModal: () => void;
   pinned: boolean;
   slug?: string | null;
@@ -74,20 +68,20 @@ interface UseAgentDropdownMenuParams {
 }
 
 export const useAgentDropdownMenu = ({
-  anchor,
   avatar,
   backgroundColor,
   group,
   id,
   labels,
   labelsEnabled,
+  name,
   openCreateGroupModal,
   pinned,
   slug,
   title,
   userId,
   visibility,
-}: UseAgentDropdownMenuParams): (() => MenuProps['items']) => {
+}: UseAgentDropdownMenuParams): (() => DropdownItem[]) => {
   const { t } = useTranslation(['chat', 'common', 'setting']);
   const navigate = useWorkspaceAwareNavigate();
 
@@ -102,10 +96,21 @@ export const useAgentDropdownMenu = ({
       : homeAgentListSelectors.agentGroups,
     isEqual,
   );
-  const refreshAgentList = useHomeStore((s) => s.refreshAgentList);
-  const [pinAgent, duplicateAgent, updateAgentGroup, removeAgent, toggleAgentLabel] = useHomeStore(
-    (s) => [s.pinAgent, s.duplicateAgent, s.updateAgentGroup, s.removeAgent, s.toggleAgentLabel],
-  );
+  const [
+    pinAgent,
+    duplicateAgent,
+    updateAgentGroup,
+    removeAgent,
+    toggleAgentLabel,
+    updateAgentMeta,
+  ] = useHomeStore((s) => [
+    s.pinAgent,
+    s.duplicateAgent,
+    s.updateAgentGroup,
+    s.removeAgent,
+    s.toggleAgentLabel,
+    s.updateAgentMeta,
+  ]);
 
   // Label picker: the shared registry (archived labels only stay listed while
   // still applied to this agent, so they can be unchecked but not re-added).
@@ -118,26 +123,9 @@ export const useAgentDropdownMenu = ({
     [registryLabels, assignedLabelIds],
   );
 
-  // Visibility actions are only meaningful inside a workspace: in personal
-  // mode every row is implicitly owner-private. "Publish to Workspace"
-  // appears on private agents; the inverse "Make private"
-  // appears on published agents, but only for the creator ( —
-  // owners demoting another member's agent would appropriate it), and never
-  // on builtin agents (LobeAI etc.). The server enforces the same rules as
-  // a backstop.
   const activeWorkspaceId = useActiveWorkspaceId();
-  const currentUserId = useUserStore(userProfileSelectors.userId);
   const { isSidebarItemVisible, setSidebarItemVisible } = useSidebarItemVisibility();
   const isShownInSidebar = isSidebarItemVisible({ id, slug, type: 'agent', userId });
-  const isPrivate = visibility === 'private';
-  const isBuiltin = !!slug && BUILTIN_SLUGS.has(slug);
-  const showPublishAction = Boolean(activeWorkspaceId) && isPrivate;
-  const showMakePrivateAction =
-    Boolean(activeWorkspaceId) &&
-    visibility === 'public' &&
-    !isBuiltin &&
-    !!currentUserId &&
-    userId === currentUserId;
 
   // Member Permissions only gate Agent configuration. Workspace-level list
   // organization (pin/group) and duplication remain available to members.
@@ -155,10 +143,17 @@ export const useAgentDropdownMenu = ({
   // Row-level ownership: delete/transfer/visibility management stays scoped
   // to the creator or a workspace owner, separate from collaborative editing.
   const canManage = useResourceManageable(userId);
+  // Delete also opens to a workspace Admin on another member's shared agent
+  // (server `canManage`); the confirmation then warns that someone else created
+  // it, and the server only accepts the delete with that acknowledgment.
+  // Lobe AI (the inbox) is listed like any Agent, but it is the scope's
+  // built-in default: it cannot be deleted, handed over or moved elsewhere.
+  const isInbox = slug === INBOX_SESSION_ID;
+  const canDelete = !isInbox && (canManage || canManageResource);
 
   // Cross-workspace Transfer to… / Copy to… items (null when workspace
   // feature is off or the viewer lacks permission for this agent)
-  const transferMenuItems = useAgentTransferMenuItem(
+  const agentTransferMenuItems = useAgentTransferMenuItem(
     id,
     {
       avatar,
@@ -167,36 +162,38 @@ export const useAgentDropdownMenu = ({
     },
     { userId, visibility },
   );
-  // Ownership handover to a workspace member (recipient must accept) — a
-  // separate entry from the cross-scope "Move to…" above.
-  const transferToMemberItem = useAgentTransferToMemberMenuItem(
-    id,
-    { avatar, backgroundColor, title },
-    { userId, visibility },
-  );
+  const transferMenuItems = isInbox ? null : agentTransferMenuItems;
+  const canManagePermission = !isInbox && canManageResource;
+
+  const copyAgentIdItem = useCopyAgentIdMenuItem(id);
 
   const isDefault = group === SessionDefaultGroup.Default;
 
-  // Visibility flips move the item across accordions. Reveal the destination
-  // section afterwards — with a collapsed/hidden target (stale persisted
-  // `sidebarExpandedKeys` predate newer sections) the item would silently
-  // vanish from the sidebar.
-  const revealSidebarSection = useRevealSidebarSection();
+  // Workspace: a personal pin for every member plus an owner/admin-only team
+  // pin on public rows. Personal mode keeps the single column-backed pin.
+  const { menuItems: workspacePinItems } = useSidebarPinMenuItems({
+    id,
+    pinned,
+    type: 'agent',
+    visibility,
+  });
 
   return useMemo(
     () => () =>
       [
-        ...(canEdit
-          ? [
-              {
-                icon: <Icon icon={pinned ? PinOff : Pin} />,
-                key: 'pin',
-                label: t(pinned ? 'pinOff' : 'pin'),
-                onClick: () => pinAgent(id, !pinned),
-                sfSymbol: pinned ? 'pin.slash' : 'pin',
-              },
-            ]
-          : []),
+        ...(activeWorkspaceId
+          ? workspacePinItems
+          : canEdit
+            ? [
+                {
+                  icon: <Icon icon={pinned ? PinOff : Pin} />,
+                  key: 'pin',
+                  label: t(pinned ? 'pinOff' : 'pin'),
+                  onClick: () => pinAgent(id, !pinned),
+                  sfSymbol: pinned ? 'pin.slash' : 'pin',
+                },
+              ]
+            : []),
         ...(isShownInSidebar
           ? [
               {
@@ -226,6 +223,7 @@ export const useAgentDropdownMenu = ({
           },
           sfSymbol: 'macwindow.badge.plus',
         },
+        ...(copyAgentIdItem ? [copyAgentIdItem] : []),
         ...(canConfigure || canCreate || canEdit ? [{ type: 'divider' as const }] : []),
         ...(canConfigure
           ? [
@@ -237,15 +235,29 @@ export const useAgentDropdownMenu = ({
                 label: t('rename', { ns: 'common' }),
                 onClick: (info: any) => {
                   info.domEvent?.stopPropagation();
-                  if (anchor) {
-                    openEditingPopover({ anchor, avatar, id, title, type: 'agent' });
-                  }
+                  openRenameModal({
+                    defaultValue: title,
+                    onSave: async (newName) => {
+                      try {
+                        // The row shows `name` when the agent has one and the role
+                        // otherwise; the rename writes back to that same field.
+                        await updateAgentMeta(id, { [agentRenameField({ name })]: newName });
+                      } catch (error) {
+                        console.error('[agent:rename]', error);
+                        toast.error(t('operationFailed', { ns: 'common' }));
+                        // The shared modal closes on a resolved save; re-throw so the
+                        // typed name survives for a retry.
+                        throw error;
+                      }
+                    },
+                  });
                 },
                 sfSymbol: 'pencil',
               },
             ]
           : []),
-        ...(canCreate
+        // A copy of Lobe AI would come out nameless: its stored title is blank.
+        ...(canCreate && !isInbox
           ? [
               {
                 icon: <Icon icon={LucideCopy} />,
@@ -426,106 +438,26 @@ export const useAgentDropdownMenu = ({
         ...(canConfigure && transferMenuItems?.length ? transferMenuItems : []),
         ...(canConfigure
           ? [
-              // Permissions live on their own page now — the sidebar keeps a
-              // shortcut so creators and workspace owners don't have to open
-              // the Agent first.
-              ...(activeWorkspaceId && canManageResource
+              // Member permissions, visibility and the handover to a member
+              // are low-frequency management: they live in the Agent's
+              // settings, and the row keeps one shortcut into that section
+              // for creators and workspace owners.
+              ...(activeWorkspaceId && canManagePermission
                 ? [
                     { type: 'divider' as const },
                     {
-                      icon: <Icon icon={UsersIcon} />,
+                      icon: <Icon icon={ShieldIcon} />,
                       key: 'permission',
-                      label: t('permission.page.entry', { ns: 'setting' }),
+                      label: t('permission.page.agentEntry', { ns: 'setting' }),
                       onClick: ({ domEvent }: any) => {
                         domEvent?.stopPropagation();
                         navigate(`/agent/${id}/permission`);
                       },
-                      sfSymbol: 'person.2',
+                      sfSymbol: 'lock.shield',
                     },
                   ]
                 : []),
-              ...(showPublishAction
-                ? [
-                    {
-                      icon: <Icon icon={GlobeIcon} />,
-                      key: 'publishToWorkspace',
-                      label: t('agent.publishToWorkspace', {
-                        defaultValue: 'Publish to Workspace',
-                      }),
-                      onClick: async ({ domEvent }: any) => {
-                        domEvent?.stopPropagation();
-                        confirmModal({
-                          cancelText: t('cancel', { ns: 'common' }),
-                          content: <VisibilityConfirmContent variant="publish" />,
-                          okText: t('agent.publishToWorkspace', {
-                            defaultValue: 'Publish to Workspace',
-                          }),
-                          onOk: async () => {
-                            try {
-                              await agentService.publishAgentToWorkspace(id);
-                              await refreshAgentList();
-                              revealSidebarSection('agent');
-                              toast.success(
-                                t('agent.publishToWorkspaceSuccess', {
-                                  defaultValue: 'Published to workspace',
-                                }),
-                              );
-                            } catch (error) {
-                              console.error('Failed to publish agent:', error);
-                              const publishErrorKey = getAgentPublishErrorKey(error);
-                              toast.error(
-                                publishErrorKey
-                                  ? t(publishErrorKey)
-                                  : t('error', {
-                                      ns: 'common',
-                                      defaultValue: 'Operation failed',
-                                    }),
-                              );
-                            }
-                          },
-                          title: t('agent.publishToWorkspace', {
-                            defaultValue: 'Publish to Workspace',
-                          }),
-                        });
-                      },
-                      sfSymbol: 'globe',
-                    },
-                  ]
-                : []),
-              // Under "Publish to Workspace": hand ownership to a member.
-              ...(transferToMemberItem ? [transferToMemberItem] : []),
-              ...(showMakePrivateAction
-                ? [
-                    {
-                      icon: <Icon icon={EyeOffIcon} />,
-                      key: 'makePrivate',
-                      label: t('makePrivate', { ns: 'common' }),
-                      onClick: async ({ domEvent }: any) => {
-                        domEvent?.stopPropagation();
-                        confirmModal({
-                          cancelText: t('cancel', { ns: 'common' }),
-                          content: <VisibilityConfirmContent variant="makePrivate" />,
-                          okButtonProps: { danger: true },
-                          okText: t('makePrivate.confirm.ok', { ns: 'common' }),
-                          onOk: async () => {
-                            try {
-                              await agentService.setAgentVisibility(id, 'private');
-                              await refreshAgentList();
-                              revealSidebarSection('private');
-                              toast.success(t('makePrivate.success', { ns: 'common' }));
-                            } catch (error) {
-                              console.error('Failed to make agent private:', error);
-                              toast.error(t('makePrivate.error', { ns: 'common' }));
-                            }
-                          },
-                          title: t('makePrivate.confirm.title', { ns: 'common' }),
-                        });
-                      },
-                      sfSymbol: 'eye.slash',
-                    },
-                  ]
-                : []),
-              ...(canManage
+              ...(canDelete
                 ? [
                     { type: 'divider' as const },
                     {
@@ -535,20 +467,16 @@ export const useAgentDropdownMenu = ({
                       label: t('delete', { ns: 'common' }),
                       onClick: ({ domEvent }: any) => {
                         domEvent.stopPropagation();
-                        confirmModal({
-                          cancelText: t('cancel', { ns: 'common' }),
-                          content: t('confirmRemoveSessionItemAlert'),
-                          okButtonProps: { danger: true },
-                          okText: t('delete', { ns: 'common' }),
-                          onOk: async () => {
+                        confirmRemoveAgent({
+                          agentId: id,
+                          onConfirm: async (options) => {
                             try {
-                              await removeAgent(id);
+                              await removeAgent(id, options);
                               toast.success(t('confirmRemoveSessionSuccess'));
                             } catch (error) {
                               toast.error(t(getDeleteErrorMessageKey(error), { ns: 'common' }));
                             }
                           },
-                          title: t('delete', { ns: 'common' }),
                         });
                       },
                       sfSymbol: 'trash',
@@ -557,43 +485,41 @@ export const useAgentDropdownMenu = ({
                 : []),
             ]
           : []),
-      ] as MenuProps['items'],
+      ] as DropdownItem[],
     [
       activeWorkspaceId,
-      anchor,
+      workspacePinItems,
       canCreate,
       canConfigure,
       canEdit,
-      canManage,
-      canManageResource,
+      canManagePermission,
+      canDelete,
+      isInbox,
       navigate,
       pinned,
       id,
-      avatar,
       title,
+      name,
       pinAgent,
       duplicateAgent,
       updateAgentGroup,
       removeAgent,
       toggleAgentLabel,
+      updateAgentMeta,
       pickerLabels,
       assignedLabelIds,
       canCreateLabel,
       labelsEnabled,
       openCreateLabelModal,
       openAgentInNewWindow,
+      copyAgentIdItem,
       sessionCustomGroups,
       group,
       isDefault,
       openCreateGroupModal,
       transferMenuItems,
-      transferToMemberItem,
-      showPublishAction,
-      showMakePrivateAction,
       isShownInSidebar,
       setSidebarItemVisible,
-      refreshAgentList,
-      revealSidebarSection,
       t,
     ],
   );

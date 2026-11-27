@@ -203,6 +203,17 @@ describe('BriefModel', () => {
       expect(rows[1].brief.priority).toBe('normal');
     });
 
+    // Run failures go to the notification center; legacy error rows must not
+    // take "Needs you" slots (they are urgent, so they would sort first).
+    it('should leave error briefs out of the home feed', async () => {
+      const model = new BriefModel(serverDB, userId);
+      await model.create({ priority: 'urgent', summary: 'x', title: 'Failed', type: 'error' });
+      await model.create({ priority: 'normal', summary: 'y', title: 'Decide', type: 'decision' });
+
+      const rows = await model.listUnresolvedEnriched();
+      expect(rows.map((row) => row.brief.title)).toEqual(['Decide']);
+    });
+
     it('should join the producing agent and parent task status in one query', async () => {
       await serverDB.insert(agents).values({
         avatar: '🤖',
@@ -601,6 +612,46 @@ describe('BriefModel', () => {
     });
   });
 
+  describe('findTaskIdsWithUnresolvedUrgent', () => {
+    it('names only the tasks held back by an unresolved, non-excluded urgent brief', async () => {
+      await serverDB.insert(tasks).values(
+        ['waiting', 'answered', 'errored', 'normal'].map((key, index) => ({
+          createdByUserId: userId,
+          id: `task-batch-${key}`,
+          identifier: `TASK-BATCH-${index}`,
+          instruction: 'do work',
+          seq: 10 + index,
+          status: 'scheduled',
+        })),
+      );
+
+      const model = new BriefModel(serverDB, userId);
+      const brief = (taskId: string, priority: string, type: string) =>
+        model.create({ priority, summary: 's', taskId, title: 't', type });
+      await brief('task-batch-waiting', 'urgent', 'decision');
+      // Two briefs on one task still name it once.
+      await brief('task-batch-waiting', 'urgent', 'decision');
+      const answered = await brief('task-batch-answered', 'urgent', 'decision');
+      await model.resolve(answered.id);
+      await brief('task-batch-errored', 'urgent', 'error');
+      await brief('task-batch-normal', 'normal', 'decision');
+
+      const ids = [
+        'task-batch-waiting',
+        'task-batch-answered',
+        'task-batch-errored',
+        'task-batch-normal',
+      ];
+      expect(await model.findTaskIdsWithUnresolvedUrgent(ids, { excludeTypes: ['error'] })).toEqual(
+        new Set(['task-batch-waiting']),
+      );
+      expect(await model.findTaskIdsWithUnresolvedUrgent(ids)).toEqual(
+        new Set(['task-batch-waiting', 'task-batch-errored']),
+      );
+      expect(await model.findTaskIdsWithUnresolvedUrgent([])).toEqual(new Set());
+    });
+  });
+
   describe('findByCronJobId', () => {
     it('should return briefs for a cron job ordered newest first', async () => {
       await serverDB.insert(agents).values({ id: 'agent-cron', title: 'Cron Agent', userId });
@@ -768,6 +819,20 @@ describe('BriefModel', () => {
 
       const found = await model.findById(brief.id);
       expect(found).toBeNull();
+    });
+  });
+
+  describe('markRead / resolve on an id the caller does not own', () => {
+    const unknownId = '00000000-0000-0000-0000-000000000000';
+
+    it('should return null from markRead when no owned row matches', async () => {
+      const model = new BriefModel(serverDB, userId);
+      await expect(model.markRead(unknownId)).resolves.toBeNull();
+    });
+
+    it('should return null from resolve when no owned row matches', async () => {
+      const model = new BriefModel(serverDB, userId);
+      await expect(model.resolve(unknownId, { action: 'read' })).resolves.toBeNull();
     });
   });
 });

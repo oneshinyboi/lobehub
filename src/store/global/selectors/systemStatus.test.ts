@@ -14,11 +14,37 @@ import {
   readOverridableField,
   reorderSidebarItems,
   routeOverlayWrites,
+  setSidebarSectionHidden,
+  SIDEBAR_ACCORDION_KEYS,
   SIDEBAR_SPACER_ID,
   systemStatusSelectors,
 } from './systemStatus';
 
 describe('systemStatusSelectors', () => {
+  describe('agent view-all sections', () => {
+    it('starts the "In sidebar" section collapsed, even over a persisted earlier default', () => {
+      expect(systemStatusSelectors.agentListSidebarSectionCollapsed(initialState)).toBe(true);
+      // Earlier builds persisted `agentListSidebarSectionCollapsed: false` for everyone.
+      const persisted: GlobalState = merge(initialState, {
+        status: { agentListSidebarSectionCollapsed: false },
+      });
+      expect(systemStatusSelectors.agentListSidebarSectionCollapsed(persisted)).toBe(true);
+
+      const expanded: GlobalState = merge(initialState, {
+        status: { agentListSidebarSectionExpanded: true },
+      });
+      expect(systemStatusSelectors.agentListSidebarSectionCollapsed(expanded)).toBe(false);
+    });
+
+    it('starts the "Recommended agents" section expanded and remembers a collapse', () => {
+      expect(systemStatusSelectors.agentListRecommendedSectionCollapsed(initialState)).toBe(false);
+      const collapsed: GlobalState = merge(initialState, {
+        status: { agentListRecommendedSectionCollapsed: true },
+      });
+      expect(systemStatusSelectors.agentListRecommendedSectionCollapsed(collapsed)).toBe(true);
+    });
+  });
+
   describe('sessionGroupKeys', () => {
     it('should return expandSessionGroupKeys from status', () => {
       const s: GlobalState = merge(initialState, {
@@ -84,6 +110,15 @@ describe('systemStatusSelectors', () => {
       expect(systemStatusSelectors.portalWidth(noPortalWidth)).toBe(400);
     });
 
+    it('should show the working overview by default only while the right panel is closed', () => {
+      const at = (status: { showRightPanel?: boolean; showWorkingOverview?: boolean }) =>
+        systemStatusSelectors.showWorkingOverview(merge(initialState, { status }));
+
+      expect(at({ showRightPanel: false, showWorkingOverview: undefined })).toBe(true);
+      expect(at({ showRightPanel: true, showWorkingOverview: undefined })).toBe(false);
+      expect(at({ showRightPanel: true, showWorkingOverview: true })).toBe(true);
+    });
+
     it('should return workingSidebarWidth from status, defaulting to 360', () => {
       expect(
         systemStatusSelectors.workingSidebarWidth(
@@ -126,6 +161,19 @@ describe('systemStatusSelectors', () => {
           }),
         ),
       ).toBe(360);
+    });
+  });
+
+  describe('topicPageSize', () => {
+    it('defaults to 20', () => {
+      expect(systemStatusSelectors.topicPageSize(initialState)).toBe(20);
+    });
+
+    // A value above the server's `getTopics` cap failed every topic list
+    // request; earlier builds could persist one from the project sidebar.
+    it('clamps a persisted value above the server cap', () => {
+      const s: GlobalState = merge(initialState, { status: { topicPageSize: 140 } });
+      expect(systemStatusSelectors.topicPageSize(s)).toBe(100);
     });
   });
 
@@ -254,24 +302,31 @@ describe('systemStatusSelectors', () => {
         status: { sidebarItems: stored },
       });
       expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual([
-        'private',
-        'agent',
-        'recents',
+        // Defaults missing from a saved layout (here the newer `project`,
+        // `goals`, `dashboard` and `favorites`) are backfilled.
+        'goals',
         'project',
+        'dashboard',
+        'favorites',
+        'agent',
+        'channels',
+        'recents',
         SIDEBAR_SPACER_ID,
         'pages',
         'tasks',
         'image',
         'community',
         'resource',
-        'memory',
       ]);
     });
 
     it('should preserve a canonically-positioned spacer', () => {
       const stored = [
         'pages',
+        'goals',
         'project',
+        'dashboard',
+        'favorites',
         'recents',
         'private',
         'agent',
@@ -285,7 +340,13 @@ describe('systemStatusSelectors', () => {
       const s: GlobalState = merge(initialState, {
         status: { sidebarItems: stored },
       });
-      expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual(stored);
+      // The former Private section is merged into Agents; Channels, saved
+      // before they joined the layout, keep their spot right below Agents.
+      expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual(
+        stored
+          .filter((key) => key !== 'private' && key !== 'memory')
+          .flatMap((key) => (key === 'agent' ? ['agent', 'channels'] : [key])),
+      );
     });
 
     it('should re-anchor the spacer when stored above the accordion', () => {
@@ -309,6 +370,26 @@ describe('systemStatusSelectors', () => {
       expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual([
         'tasks',
         'pages',
+        'goals',
+        'project',
+        'dashboard',
+        'resource',
+        'image',
+        'community',
+        'favorites',
+        'recents',
+        'agent',
+        'channels',
+        SIDEBAR_SPACER_ID,
+      ]);
+    });
+
+    it('should backfill favorites at the head of a saved accordion block', () => {
+      const stored = [
+        'tasks',
+        'goals',
+        'dashboard',
+        'resource',
         'recents',
         'project',
         'private',
@@ -316,9 +397,139 @@ describe('systemStatusSelectors', () => {
         SIDEBAR_SPACER_ID,
         'image',
         'community',
-        'resource',
         'memory',
+      ];
+      const s: GlobalState = merge(initialState, {
+        status: { sidebarItems: stored },
+      });
+      expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual([
+        'tasks',
+        // Projects left the accordion for a link, so a saved layout lifts it below Goals.
+        'goals',
+        'project',
+        'dashboard',
+        'resource',
+        // Untouched former bottom links move above the accordion.
+        'image',
+        'community',
+        'favorites',
+        'recents',
+        'agent',
+        'channels',
+        SIDEBAR_SPACER_ID,
       ]);
+    });
+
+    it.each([
+      ['April', ['pages', 'recents', 'agent', 'community', 'resource', 'memory']],
+      [
+        'June',
+        [
+          'tasks',
+          'pages',
+          'recents',
+          'agent',
+          SIDEBAR_SPACER_ID,
+          'image',
+          'community',
+          'resource',
+          'memory',
+        ],
+      ],
+      [
+        'August',
+        [
+          'tasks',
+          'resource',
+          'recents',
+          'private',
+          'agent',
+          SIDEBAR_SPACER_ID,
+          'image',
+          'community',
+          'pages',
+          'memory',
+        ],
+      ],
+    ])('should move every link of the former %s default above the sections', (_, stored) => {
+      const items = systemStatusSelectors.sidebarItems(null)(
+        merge(initialState, { status: { sidebarItems: stored } }),
+      );
+      const firstSection = items.findIndex((key) => SIDEBAR_ACCORDION_KEYS.has(key));
+
+      expect(items.slice(items.indexOf(SIDEBAR_SPACER_ID) + 1)).toEqual([]);
+      // They land in default order, below the links that lead the list.
+      expect(items.indexOf('tasks')).toBeLessThan(items.indexOf('resource'));
+      expect(items.indexOf('project')).toBeLessThan(items.indexOf('image'));
+      expect(items.indexOf('resource')).toBeLessThan(items.indexOf('image'));
+      expect(items.indexOf('image')).toBeLessThan(items.indexOf('community'));
+      expect(items.indexOf('community')).toBeLessThan(firstSection);
+    });
+
+    it('should keep Generation and Plugins pinned at the bottom once saved that way', () => {
+      // A layout saved after the move no longer lists `memory`.
+      const stored = ['tasks', 'recents', 'agent', SIDEBAR_SPACER_ID, 'image', 'community'];
+      const items = systemStatusSelectors.sidebarItems(null)(
+        merge(initialState, { status: { sidebarItems: stored } }),
+      );
+      const spacerIdx = items.indexOf(SIDEBAR_SPACER_ID);
+      expect(items.slice(spacerIdx + 1)).toEqual(['image', 'community']);
+    });
+
+    it('should leave a hand-arranged bottom group in place and only drop Memory', () => {
+      const stored = ['recents', 'agent', SIDEBAR_SPACER_ID, 'tasks', 'image', 'memory'];
+      const items = systemStatusSelectors.sidebarItems(null)(
+        merge(initialState, { status: { sidebarItems: stored } }),
+      );
+      const spacerIdx = items.indexOf(SIDEBAR_SPACER_ID);
+      expect(items.slice(spacerIdx + 1)).toEqual(['tasks', 'image']);
+      expect(items).not.toContain('memory');
+    });
+
+    it('should lift projects above the accordion when tasks sit below the spacer', () => {
+      const stored = [
+        'goals',
+        'favorites',
+        'project',
+        'recents',
+        'agent',
+        SIDEBAR_SPACER_ID,
+        'tasks',
+        'image',
+      ];
+      const s: GlobalState = merge(initialState, {
+        status: { sidebarItems: stored },
+      });
+      const items = systemStatusSelectors.sidebarItems(null)(s);
+      expect(items.slice(0, 3)).toEqual(['goals', 'project', 'dashboard']);
+      expect(items.indexOf('project')).toBeLessThan(items.indexOf('favorites'));
+    });
+
+    it('should keep projects where the user moved them outside the accordion', () => {
+      const stored = [
+        'tasks',
+        'goals',
+        'dashboard',
+        'resource',
+        'favorites',
+        'recents',
+        'agent',
+        SIDEBAR_SPACER_ID,
+        'image',
+        'project',
+        'community',
+        'memory',
+      ];
+      const s: GlobalState = merge(initialState, {
+        status: { sidebarItems: stored },
+      });
+      // The former Private section is merged into Agents; Channels, saved
+      // before they joined the layout, keep their spot right below Agents.
+      expect(systemStatusSelectors.sidebarItems(null)(s)).toEqual(
+        stored
+          .filter((key) => key !== 'private' && key !== 'memory')
+          .flatMap((key) => (key === 'agent' ? ['agent', 'channels'] : [key])),
+      );
     });
 
     it('should slot missing top-group defaults before the accordion block', () => {
@@ -328,21 +539,35 @@ describe('systemStatusSelectors', () => {
       const items = systemStatusSelectors.sidebarItems(null)(s);
       const spacerIdx = items.indexOf(SIDEBAR_SPACER_ID);
       // every known key is present
-      expect(items).toContain('pages');
       expect(items).toContain('tasks');
       expect(items).toContain('community');
       expect(items).toContain('resource');
-      expect(items).toContain('memory');
-      // accordion block is flush against the spacer, in stored order
-      expect(items[spacerIdx - 3]).toBe('agent');
-      expect(items[spacerIdx - 2]).toBe('recents');
-      expect(items[spacerIdx - 1]).toBe('project');
+      expect(items).not.toContain('memory');
+      // accordion block is flush against the spacer, in stored order, with
+      // Channels kept right below Agents
+      expect(items.slice(spacerIdx - 3, spacerIdx)).toEqual(['agent', 'channels', 'recents']);
       // missing top-group defaults slot in just before the accordion
       expect(items.indexOf('tasks')).toBeLessThan(spacerIdx - 3);
+      expect(items.indexOf('project')).toBe(items.indexOf('goals') + 1);
       expect(items.indexOf('resource')).toBeLessThan(spacerIdx - 3);
-      // missing bottom-group defaults sit after the spacer
-      expect(items.indexOf('image')).toBeGreaterThan(spacerIdx);
-      expect(items.indexOf('pages')).toBeGreaterThan(spacerIdx);
+      expect(items.indexOf('image')).toBeLessThan(spacerIdx - 3);
+      // Pages live in Docs now; the retired entry is not backfilled
+      expect(items).not.toContain('pages');
+    });
+
+    it('should keep Channels where the user moved them in the accordion block', () => {
+      const s: GlobalState = merge(initialState, {
+        status: { sidebarItems: ['channels', 'favorites', 'recents', 'agent', SIDEBAR_SPACER_ID] },
+      });
+      const items = systemStatusSelectors.sidebarItems(null)(s);
+      const spacerIdx = items.indexOf(SIDEBAR_SPACER_ID);
+      expect(items.slice(spacerIdx - 4, spacerIdx)).toEqual([
+        'channels',
+        'favorites',
+        'recents',
+        'agent',
+      ]);
+      expect(items.filter((key) => key === 'channels')).toHaveLength(1);
     });
 
     it('should migrate legacy `sidebarSectionOrder` accordion order into the default layout', () => {
@@ -350,20 +575,21 @@ describe('systemStatusSelectors', () => {
         status: { sidebarSectionOrder: ['agent', 'recents'] },
       });
       const items = systemStatusSelectors.sidebarItems(null)(s);
-      // accordion slot uses the user's legacy order; `private` (added after
+      // accordion slot uses the user's legacy order; `favorites` (added after
       // the legacy state was saved) is backfilled at the head of the block.
       expect(items).toEqual([
         'tasks',
-        'resource',
-        'private',
-        'agent',
-        'recents',
+        'goals',
         'project',
-        SIDEBAR_SPACER_ID,
+        'dashboard',
+        'resource',
         'image',
         'community',
-        'pages',
-        'memory',
+        'favorites',
+        'agent',
+        'channels',
+        'recents',
+        SIDEBAR_SPACER_ID,
       ]);
     });
 
@@ -372,20 +598,20 @@ describe('systemStatusSelectors', () => {
         status: { sidebarSectionOrder: ['recents', 'agent'] },
       });
       const items = systemStatusSelectors.sidebarItems(null)(s);
-      // `private` (new accordion entry not present in legacy state) is
-      // backfilled at the head of the block; recents/agent keep legacy order.
+      // recents/agent keep their legacy order.
       expect(items).toEqual([
         'tasks',
-        'resource',
-        'private',
-        'recents',
+        'goals',
         'project',
-        'agent',
-        SIDEBAR_SPACER_ID,
+        'dashboard',
+        'resource',
         'image',
         'community',
-        'pages',
-        'memory',
+        'favorites',
+        'recents',
+        'agent',
+        'channels',
+        SIDEBAR_SPACER_ID,
       ]);
     });
 
@@ -594,6 +820,29 @@ describe('systemStatusSelectors', () => {
         ]);
       });
 
+      it('keeps the merged entry visible in a workspace if either old entry was visible', () => {
+        const workspaceHidden = (keys: string[]) =>
+          systemStatusSelectors.hiddenSidebarSections('ws-1')(
+            merge(initialState, { status: { workspace: { hiddenSidebarSections: keys } } }),
+          );
+        expect(workspaceHidden(['tasks'])).not.toContain('tasks');
+        expect(workspaceHidden(['tasks', 'goals'])).toContain('tasks');
+      });
+
+      it('keeps the merged personal entry visible if either old entry was visible', () => {
+        const personalHidden = (keys: string[]) =>
+          systemStatusSelectors.hiddenSidebarSections(null)(
+            merge(initialState, {
+              status: { hiddenSidebarSections: keys },
+            }),
+          );
+        expect(personalHidden(['tasks'])).not.toContain('tasks');
+        expect(personalHidden(['goals'])).not.toContain('tasks');
+        const hidden = setSidebarSectionHidden(['recents'], 'tasks', true);
+        expect(personalHidden(hidden)).toContain('tasks');
+        expect(setSidebarSectionHidden(hidden, 'tasks', false)).toEqual(['recents']);
+      });
+
       it('hiddenSidebarSections prefers overlay in workspace mode', () => {
         expect(systemStatusSelectors.hiddenSidebarSections('ws-1')(stateWithOverlay)).toEqual([
           'recents',
@@ -699,6 +948,23 @@ describe('systemStatusSelectors', () => {
     });
   });
 
+  describe('teamBoardAttentionCollapsed', () => {
+    // Open by default: a first-time viewer must see what needs attention.
+    it('reads as open when the viewer has never folded the list', () => {
+      const s: GlobalState = merge(initialState, { status: {} });
+
+      expect(systemStatusSelectors.teamBoardAttentionCollapsed(s)).toBe(false);
+    });
+
+    it('keeps the list folded once the viewer put it away', () => {
+      const s: GlobalState = merge(initialState, {
+        status: { teamBoardAttentionCollapsed: true },
+      });
+
+      expect(systemStatusSelectors.teamBoardAttentionCollapsed(s)).toBe(true);
+    });
+  });
+
   describe('homeGoalsCollapsed', () => {
     // The goals card opens by default: a first-time viewer must see the goals,
     // not an unexplained folded header.
@@ -712,6 +978,19 @@ describe('systemStatusSelectors', () => {
       const s: GlobalState = merge(initialState, { status: { homeGoalsCollapsed: true } });
 
       expect(systemStatusSelectors.homeGoalsCollapsed(s)).toBe(true);
+    });
+  });
+
+  describe('projectOnboardingDismissed', () => {
+    it('is false until the card of that project is dismissed', () => {
+      const s: GlobalState = merge(initialState, {
+        status: { dismissedProjectOnboarding: { 'project-1': true } },
+      });
+      expect(systemStatusSelectors.projectOnboardingDismissed('project-1')(s)).toBe(true);
+      expect(systemStatusSelectors.projectOnboardingDismissed('project-2')(s)).toBe(false);
+      expect(systemStatusSelectors.projectOnboardingDismissed('project-2')(initialState)).toBe(
+        false,
+      );
     });
   });
 });

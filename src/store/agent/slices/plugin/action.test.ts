@@ -13,15 +13,6 @@ vi.mock('@/services/agent', () => ({
   },
 }));
 
-// Mock sessionStore
-vi.mock('@/store/session', () => ({
-  useSessionStore: {
-    getState: vi.fn(() => ({
-      refreshSessions: vi.fn(),
-    })),
-  },
-}));
-
 beforeEach(() => {
   vi.clearAllMocks();
   useAgentStore.setState({
@@ -39,11 +30,11 @@ afterEach(() => {
 
 describe('PluginSlice Actions', () => {
   describe('togglePlugin', () => {
-    it('should add plugin when not in list', async () => {
+    it('should enable plugin as mode auto when not in list', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: ['plugin-1'] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'auto' }] } as any,
         success: true,
       });
 
@@ -61,17 +52,18 @@ describe('PluginSlice Actions', () => {
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [{ identifier: 'plugin-1', mode: 'pinned' }],
+          plugins: [{ identifier: 'plugin-1', mode: 'auto' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
-    it('should remove plugin when in list', async () => {
+    it('should disable plugin when already enabled (legacy string or auto object)', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: [] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'disabled' }] } as any,
         success: true,
       });
 
@@ -89,17 +81,49 @@ describe('PluginSlice Actions', () => {
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [],
+          plugins: [{ identifier: 'plugin-1', mode: 'disabled' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
-    it('should add plugin when open=true explicitly', async () => {
+    it('keeps the toggle on its Agent when the user switches while it loads', async () => {
+      vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'auto' }] } as any,
+        success: true,
+      });
+
+      useAgentStore.setState({
+        activeAgentId: 'agent-1',
+        agentMap: {
+          'agent-1': { plugins: [] } as any,
+          'agent-2': { plugins: [] } as any,
+        },
+      });
+
+      await act(async () => {
+        const toggle = useAgentStore.getState().togglePlugin('plugin-1', true);
+        useAgentStore.setState({ activeAgentId: 'agent-2' });
+        await toggle;
+      });
+
+      expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1);
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          plugins: [{ identifier: 'plugin-1', mode: 'auto' }],
+        }),
+        expect.any(AbortSignal),
+        undefined,
+      );
+    });
+
+    it('should enable plugin as mode auto when open=true explicitly', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: ['plugin-1'] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'auto' }] } as any,
         success: true,
       });
 
@@ -117,17 +141,18 @@ describe('PluginSlice Actions', () => {
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [{ identifier: 'plugin-1', mode: 'pinned' }],
+          plugins: [{ identifier: 'plugin-1', mode: 'auto' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
-    it('should remove plugin when open=false explicitly', async () => {
+    it('should disable plugin explicitly when open=false', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: [] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'disabled' }] } as any,
         success: true,
       });
 
@@ -145,17 +170,18 @@ describe('PluginSlice Actions', () => {
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [],
+          plugins: [{ identifier: 'plugin-1', mode: 'disabled' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
-    it('should not add duplicate plugin', async () => {
+    it('should not add duplicate plugin and should upgrade legacy entries in place', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: ['plugin-1'] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'auto' }] } as any,
         success: true,
       });
 
@@ -170,13 +196,79 @@ describe('PluginSlice Actions', () => {
         await result.current.togglePlugin('plugin-1', true);
       });
 
-      // Should still have only one plugin-1 (upgraded in place to object shape)
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [{ identifier: 'plugin-1', mode: 'pinned' }],
+          plugins: [{ identifier: 'plugin-1', mode: 'auto' }],
         }),
         expect.any(AbortSignal),
+        undefined,
+      );
+    });
+
+    it('sets builtinOverride when toggling an on-demand builtin tool', async () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
+        agent: { plugins: [] } as any,
+        success: true,
+      });
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': {
+              plugins: [{ identifier: 'lobe-calculator', mode: 'disabled' }],
+            } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        await result.current.togglePlugin('lobe-calculator', true);
+      });
+
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          plugins: [{ builtinOverride: true, identifier: 'lobe-calculator', mode: 'auto' }],
+        }),
+        expect.any(AbortSignal),
+        undefined,
+      );
+    });
+
+    it('toggleAgentPlugin flips a disabled object entry in place without appending duplicates', async () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
+        agent: { plugins: [] } as any,
+        success: true,
+      });
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': {
+              plugins: [{ identifier: 'github', mode: 'disabled' }],
+            } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        await result.current.toggleAgentPlugin('github', true);
+      });
+
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          plugins: [{ identifier: 'github', mode: 'auto' }],
+        }),
+        expect.any(AbortSignal),
+        undefined,
       );
     });
 
@@ -184,7 +276,7 @@ describe('PluginSlice Actions', () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
-        agent: { plugins: ['plugin-1'] } as any,
+        agent: { plugins: [{ identifier: 'plugin-1', mode: 'auto' }] } as any,
         success: true,
       });
 
@@ -202,15 +294,16 @@ describe('PluginSlice Actions', () => {
       expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
         'agent-1',
         expect.objectContaining({
-          plugins: [{ identifier: 'plugin-1', mode: 'pinned' }],
+          plugins: [{ identifier: 'plugin-1', mode: 'auto' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
   });
 
   describe('removePlugin', () => {
-    it('should call togglePlugin with open=false', async () => {
+    it('should drop an existing entry regardless of mode', async () => {
       const { result } = renderHook(() => useAgentStore());
 
       vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
@@ -221,7 +314,9 @@ describe('PluginSlice Actions', () => {
       act(() => {
         useAgentStore.setState({
           activeAgentId: 'agent-1',
-          agentMap: { 'agent-1': { plugins: ['plugin-1'] } as any },
+          agentMap: {
+            'agent-1': { plugins: [{ identifier: 'plugin-1', mode: 'disabled' }] } as any,
+          },
         });
       });
 
@@ -235,6 +330,7 @@ describe('PluginSlice Actions', () => {
           plugins: [],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
@@ -264,6 +360,7 @@ describe('PluginSlice Actions', () => {
           plugins: ['existing-plugin'],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
   });
@@ -295,6 +392,7 @@ describe('PluginSlice Actions', () => {
           plugins: [{ identifier: 'plugin-1', mode: 'disabled' }, 'plugin-2'],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
@@ -325,6 +423,7 @@ describe('PluginSlice Actions', () => {
           plugins: [{ identifier: 'plugin-1', mode: 'pinned' }],
         }),
         expect.any(AbortSignal),
+        undefined,
       );
     });
 
@@ -357,6 +456,36 @@ describe('PluginSlice Actions', () => {
           plugins: ['plugin-2'],
         }),
         expect.any(AbortSignal),
+        undefined,
+      );
+    });
+
+    it('keeps an explicit auto entry for a library skill, whose absence means disabled', async () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
+        agent: {} as any,
+        success: true,
+      });
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { plugins: ['plugin-2'] } as any },
+        });
+      });
+
+      await act(async () => {
+        await result.current.setPluginMode('excalidraw', 'auto', 'disabled');
+      });
+
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          plugins: ['plugin-2', { identifier: 'excalidraw', mode: 'auto' }],
+        }),
+        expect.any(AbortSignal),
+        undefined,
       );
     });
   });

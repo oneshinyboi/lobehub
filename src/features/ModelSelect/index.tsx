@@ -1,14 +1,27 @@
-import { Flexbox, Tooltip, TooltipGroup } from '@lobehub/ui';
-import { Button, Select, type SelectProps, Switch, Tag, Text, toast } from '@lobehub/ui/base-ui';
-import { createStaticStyles } from 'antd-style';
+import {
+  Button,
+  createStaticStyles,
+  Flexbox,
+  Select,
+  type SelectProps,
+  Switch,
+  Tag,
+  Text,
+  toast,
+  Tooltip,
+  TooltipGroup,
+} from '@lobehub/ui';
 import { type ReactNode } from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useBusinessModelListGuard } from '@/business/client/hooks/useBusinessModelListGuard';
 import { ModelIcon } from '@/components/LobeIcons';
 import { ModelItemRender, ProviderItemRender, TAG_CLASSNAME } from '@/components/ModelSelect';
 import { aiProviderSelectors, useAiInfraStore } from '@/store/aiInfra';
+import { densityVars } from '@/styles/densityVars';
 import { type EnabledProviderWithModels } from '@/types/aiProvider';
+import { filterHiddenModels } from '@/utils/filterHiddenModels';
 
 import { resolveEnableTargetProviderId, resolveStaleModelState } from './resolveStaleModelState';
 
@@ -44,7 +57,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     width: max(360px, var(--anchor-width));
 
     &.${prefixCls}-select-dropdown .${prefixCls}-select-item-option-grouped {
-      padding-inline-start: 12px;
+      padding-inline-start: ${densityVars.contentGap};
     }
 
     /* !important: the Tag's own class rule wins the cascade over this
@@ -141,6 +154,14 @@ const ModelSelect = memo<ModelSelectProps>(
       const allowedProviderIds = new Set(providerIds);
       return fullEnabledList.filter((provider) => allowedProviderIds.has(provider.id));
     }, [fullEnabledList, providerIds]);
+    // Models a business policy leaves out (e.g. ones above the tier a workspace
+    // admin allows this member) are not offered; a saved selection of one shows
+    // as `restricted` instead of its raw id or a "removed" warning.
+    const { isModelHidden } = useBusinessModelListGuard();
+    const selectableList = useMemo(
+      () => (modelType === 'chat' ? filterHiddenModels(enabledList, isModelHidden) : enabledList),
+      [enabledList, isModelHidden, modelType],
+    );
     const builtinAiModelList = useAiInfraStore((s) => s.builtinAiModelList);
     const modelRedirects = useAiInfraStore((s) => s.modelRedirects);
     const enabledAiProviders = useAiInfraStore((s) => s.enabledAiProviders);
@@ -159,20 +180,27 @@ const ModelSelect = memo<ModelSelectProps>(
 
         return models.map((model) => ({
           ...model,
-          label: <ModelItemRender {...model} {...model.abilities} showInfoTag={false} />,
+          label: (
+            <ModelItemRender
+              {...model}
+              {...model.abilities}
+              provider={provider.id}
+              showInfoTag={false}
+            />
+          ),
           provider: provider.id,
           title: model.displayName || model.id,
           value: `${provider.id}/${model.id}`,
         }));
       };
 
-      if (enabledList.length === 1) {
-        const provider = enabledList[0];
+      if (selectableList.length === 1) {
+        const provider = selectableList[0];
 
         return getChatModels(provider);
       }
 
-      return enabledList
+      return selectableList
         .map((provider) => {
           const opts = getChatModels(provider);
           if (opts.length === 0) return undefined;
@@ -190,7 +218,7 @@ const ModelSelect = memo<ModelSelectProps>(
           };
         })
         .filter(Boolean) as SelectProps['options'];
-    }, [enabledList, requiredAbilities]);
+    }, [requiredAbilities, selectableList]);
 
     const staleState = useMemo(() => {
       // Before the runtime state hydrates, the store lists are empty and any valid
@@ -201,6 +229,7 @@ const ModelSelect = memo<ModelSelectProps>(
       return resolveStaleModelState(value, {
         builtinAiModelList,
         enabledList,
+        isModelHidden: modelType === 'chat' ? isModelHidden : undefined,
         modelRedirects,
         modelType,
       });
@@ -208,6 +237,7 @@ const ModelSelect = memo<ModelSelectProps>(
       builtinAiModelList,
       enabledList,
       isInitAiProviderRuntimeState,
+      isModelHidden,
       modelRedirects,
       modelType,
       value,
@@ -278,7 +308,7 @@ const ModelSelect = memo<ModelSelectProps>(
             <Tooltip title={t(`ModelSelect.staleModel.${status}.tooltip`, { successorName })}>
               <Tag
                 className={STALE_TAG_CLASSNAME}
-                color={status === 'removed' ? 'warning' : undefined}
+                color={status === 'removed' || status === 'restricted' ? 'warning' : undefined}
                 size={'small'}
                 style={{ cursor: 'default', flex: 'none' }}
               >
@@ -389,6 +419,7 @@ const ModelSelect = memo<ModelSelectProps>(
               <ModelItemRender
                 {...(option as ModelOption)}
                 {...(option as ModelOption).abilities}
+                provider={(option as ModelOption).provider}
                 showInfoTag={false}
               />
             );

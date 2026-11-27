@@ -119,6 +119,7 @@ Use this scan to identify applicable checks, then read the linked module for its
 - [ ] Keep populated lists visible beneath persistent composers; cap or collapse growing editors.
 - [ ] Status labels describe every member accurately.
 - [ ] Embedded documents collapse to titled rows and expand to full text with subordinate typography.
+- [ ] Entities without an image fall back to a shared type glyph, never a letter avatar of the name or a UI label.
 
 **Edit — entering & changing content** ([edit.md](references/edit.md))
 
@@ -139,7 +140,7 @@ Use this scan to identify applicable checks, then read the linked module for its
 - [ ] Provide the lifecycle operations appropriate to each entity's source; honor pin/keep/lock on every removal path.
 - [ ] Show the acting identity and an account-switch or re-authentication path.
 - [ ] Require a deliberate gesture for unrecoverable or broad destructive actions and report partial failure.
-- [ ] Reveal newly minted secrets once with Copy, hash them at rest, and mask subsequent views.
+- [ ] Reveal newly minted secrets once with Copy, then mask them; hash verify-only secrets and encrypt protocol credentials the server needs in plaintext; generate an entity's credential on demand in its own row, not at creation.
 - [ ] User-memory/profile stores support correction, retaining without use, export, and undo or soft-delete.
 
 **Feedback — loading & system response** ([feedback.md](references/feedback.md))
@@ -150,6 +151,7 @@ Use this scan to identify applicable checks, then read the linked module for its
 - [ ] Dependent-fetch gates release on settled data, absence, or error; error/not-found branches remain reachable.
 - [ ] Failed awaited writes release busy controls; autosave exposes saving, saved, and failed states with retry.
 - [ ] Write localized, human-readable errors; keep internal IDs in structured inspection fields and lead with the remedy for deterministic failures.
+- [ ] Show submit failures of a form or dialog that stays open beside the field or submit button with the next step, not as a toast.
 - [ ] Capability warnings are reactive and wait for resolved configuration; distinguish model choices from platform limitations.
 
 **Grow — discoverability & progressive disclosure** ([grow.md](references/grow.md))

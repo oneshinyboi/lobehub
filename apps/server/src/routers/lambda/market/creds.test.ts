@@ -11,6 +11,9 @@ interface MockOrgCredRow {
 }
 
 const {
+  mockCredsInject,
+  mockMarketSandboxProvider,
+  mockResolveSandboxSessionConfig,
   mockOrgCredsList,
   mockPersonalCredsInject,
   mockPersonalCredsList,
@@ -18,6 +21,12 @@ const {
   mockPersonalCredsPublish,
   mockPersonalCredsUnshare,
 } = vi.hoisted(() => ({
+  mockCredsInject: vi.fn(async () => ({ credentials: { env: {} }, success: true })),
+  mockMarketSandboxProvider: vi.fn(function (this: any, options: any) {
+    this.options = options;
+    this.callTool = vi.fn(async () => ({ result: {}, success: true }));
+  }),
+  mockResolveSandboxSessionConfig: vi.fn(async () => ({ claim: null, mode: 'ephemeral' })),
   mockOrgCredsList: vi.fn(async (): Promise<{ data: MockOrgCredRow[] }> => ({
     data: [{ id: 1, key: 'ORG_SECRET' }],
   })),
@@ -26,7 +35,11 @@ const {
     notFound: [],
     success: true,
   })),
-  mockPersonalCredsList: vi.fn(async () => ({ data: [{ id: 2, key: 'PERSONAL_SECRET' }] })),
+  mockPersonalCredsList: vi.fn(
+    async (): Promise<{
+      data: Array<{ id: number; key: string; shares?: Array<{ workspaceId?: string }> }>;
+    }> => ({ data: [{ id: 2, key: 'PERSONAL_SECRET' }] }),
+  ),
   mockPersonalCredsPublish: vi.fn(async (id: number) => ({ id, visibility: 'public' })),
   mockPersonalCredsShare: vi.fn(async (id: number) => ({ id, visibility: 'private' })),
   mockPersonalCredsUnshare: vi.fn(async (id: number) => ({ id, visibility: 'private' })),
@@ -35,6 +48,7 @@ const {
 const { mockInjectCredsIntoOnlyboxesSandbox } = vi.hoisted(() => ({
   mockInjectCredsIntoOnlyboxesSandbox: vi.fn(async () => ({
     credentials: { env: { OPENROUTER_API_KEY: 'sk******ca' }, files: [] },
+    envVarsByKey: { Openrouter: ['OPENROUTER_API_KEY'] },
     notFound: [],
     success: true,
     unsupportedInSandbox: [],
@@ -48,7 +62,8 @@ vi.mock('@/server/services/creds/onlyboxesInjection', () => ({
 vi.mock('@/server/services/sandbox', () => ({
   createSandboxService: vi.fn(() => ({ writeCredentials: vi.fn() })),
   getSandboxProviderKind: vi.fn(() => 'market'),
-  resolveSandboxSessionConfig: vi.fn(async () => ({ claim: null, mode: 'ephemeral' })),
+  MarketSandboxProvider: mockMarketSandboxProvider,
+  resolveSandboxSessionConfig: mockResolveSandboxSessionConfig,
 }));
 
 vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
@@ -92,7 +107,7 @@ vi.mock('@/server/services/market', () => ({
     return {
       market: {
         creds: {
-          inject: mockPersonalCredsInject,
+          inject: mockCredsInject,
           list: mockPersonalCredsList,
           publish: mockPersonalCredsPublish,
           share: mockPersonalCredsShare,
@@ -123,8 +138,7 @@ describe('credsRouter is always personal-scoped', () => {
   // instead of the caller's own personal creds — indistinguishable from
   // `workspaceCreds.list`. This must never happen again: `list` always
   // returns personal creds data, with or without an active (even verified)
-  // workspace — the org list is only ever consulted (below) to scope the
-  // `sharedToActiveWorkspace` enrichment, never to source the result.
+  // workspace.
   it('returns personal creds data, never the org list, when the caller is a verified workspace member', async () => {
     const { credsRouter } = await import('./creds');
 
@@ -194,59 +208,40 @@ describe('credsRouter list scopes sharing to the active workspace', () => {
     vi.clearAllMocks();
   });
 
-  // A personal credential can only be linked to one organization at a time —
-  // `organizationAccountId != null` alone can't tell "shared to *this*
-  // workspace" apart from "shared to some other workspace previously". `list`
-  // cross-references the active workspace's own merged view (by id, among
-  // entries it marks `ownerType: 'user'`) to compute this per credential.
-  it('flags sharedToActiveWorkspace: true only when the credential appears as a user-owned entry in the active workspace org list', async () => {
-    mockOrgCredsList.mockResolvedValueOnce({
-      data: [{ id: 2, key: 'PERSONAL_SECRET', ownerType: 'user' }],
+  const listIn = async (workspaceId: string | undefined) => {
+    const { credsRouter } = await import('./creds');
+    return credsRouter
+      .createCaller({ isWorkspaceMember: !!workspaceId, userId: 'user-1', workspaceId } as any)
+      .list();
+  };
+
+  it("flags sharedToActiveWorkspace from the credential's own shares", async () => {
+    mockPersonalCredsList.mockResolvedValueOnce({
+      data: [
+        { id: 2, key: 'HERE', shares: [{ workspaceId: 'other' }, { workspaceId: 'workspace-1' }] },
+        { id: 3, key: 'ELSEWHERE', shares: [{ workspaceId: 'other' }] },
+        { id: 4, key: 'UNSHARED', shares: [] },
+      ],
     });
-    const { credsRouter } = await import('./creds');
 
-    const caller = credsRouter.createCaller({
-      isWorkspaceMember: true,
-      userId: 'user-1',
-      workspaceId: 'workspace-1',
-    } as any);
+    const result = await listIn('workspace-1');
 
-    const result = await caller.list();
-
-    expect(result.data).toEqual([{ id: 2, key: 'PERSONAL_SECRET', sharedToActiveWorkspace: true }]);
-  });
-
-  it('flags sharedToActiveWorkspace: false when the credential is not in the active workspace org list (e.g. shared to a different workspace)', async () => {
-    // Org list has no entry for id 2 at all — simulates the credential being
-    // linked to some *other* workspace instead.
-    const { credsRouter } = await import('./creds');
-
-    const caller = credsRouter.createCaller({
-      isWorkspaceMember: true,
-      userId: 'user-1',
-      workspaceId: 'workspace-1',
-    } as any);
-
-    const result = await caller.list();
-
-    expect(result.data).toEqual([
-      { id: 2, key: 'PERSONAL_SECRET', sharedToActiveWorkspace: false },
+    expect(result.data?.map((c) => [c.key, c.sharedToActiveWorkspace])).toEqual([
+      ['HERE', true],
+      ['ELSEWHERE', false],
+      ['UNSHARED', false],
     ]);
+    expect(mockOrgCredsList).not.toHaveBeenCalled();
   });
 
-  it('still returns the personal list if the active-workspace org lookup fails (e.g. org not set up yet)', async () => {
-    mockOrgCredsList.mockRejectedValueOnce(new Error('org not found'));
-    const { credsRouter } = await import('./creds');
+  it('leaves the flag off outside a workspace', async () => {
+    mockPersonalCredsList.mockResolvedValueOnce({
+      data: [{ id: 2, key: 'HERE', shares: [{ workspaceId: 'workspace-1' }] }],
+    });
 
-    const caller = credsRouter.createCaller({
-      isWorkspaceMember: true,
-      userId: 'user-1',
-      workspaceId: 'workspace-1',
-    } as any);
+    const result = await listIn(undefined);
 
-    const result = await caller.list();
-
-    expect(result.data).toEqual([{ id: 2, key: 'PERSONAL_SECRET' }]);
+    expect(result.data?.[0]).not.toHaveProperty('sharedToActiveWorkspace');
   });
 });
 
@@ -288,7 +283,7 @@ describe('credsRouter share/publish/unshare', () => {
     expect(mockPersonalCredsShare).not.toHaveBeenCalled();
   });
 
-  it('publishes a draft-linked credential without requiring an org id', async () => {
+  it("publishes the credential's share into the caller-verified workspace", async () => {
     const { credsRouter } = await import('./creds');
 
     const caller = credsRouter.createCaller({
@@ -299,11 +294,13 @@ describe('credsRouter share/publish/unshare', () => {
 
     const result = await caller.publish({ id: 42 });
 
-    expect(mockPersonalCredsPublish).toHaveBeenCalledWith(42);
+    expect(mockPersonalCredsPublish).toHaveBeenCalledWith(42, undefined, {
+      orgId: 'workspace:workspace-1',
+    });
     expect(result).toEqual({ id: 42, visibility: 'public' });
   });
 
-  it('unshares a credential, clearing its workspace link', async () => {
+  it('unshares a credential from the caller-verified workspace only', async () => {
     const { credsRouter } = await import('./creds');
 
     const caller = credsRouter.createCaller({
@@ -314,7 +311,9 @@ describe('credsRouter share/publish/unshare', () => {
 
     const result = await caller.unshare({ id: 42 });
 
-    expect(mockPersonalCredsUnshare).toHaveBeenCalledWith(42);
+    expect(mockPersonalCredsUnshare).toHaveBeenCalledWith(42, undefined, {
+      orgId: 'workspace:workspace-1',
+    });
     expect(result).toEqual({ id: 42, visibility: 'private' });
   });
 
@@ -337,9 +336,11 @@ describe('credsRouter share/publish/unshare', () => {
   });
 });
 
-describe('credsRouter inject on Onlyboxes', () => {
+describe('credsRouter inject sandbox routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Upstream's tests assume the default; onlyboxes tests override below.
+    vi.mocked(getSandboxProviderKind).mockReturnValue('market');
   });
 
   // The desktop client executes `injectCredsToSandbox` through this route (not
@@ -357,8 +358,9 @@ describe('credsRouter inject on Onlyboxes', () => {
     expect(mockInjectCredsIntoOnlyboxesSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ keys: ['Openrouter'], workspaceId: undefined }),
     );
-    expect(mockPersonalCredsInject).not.toHaveBeenCalled();
+    expect(mockCredsInject).not.toHaveBeenCalled();
     expect(result.credentials?.env).toEqual({ OPENROUTER_API_KEY: 'sk******ca' });
+    expect(result.envVarsByKey).toEqual({ Openrouter: ['OPENROUTER_API_KEY'] });
   });
 
   it('still calls market inject when the provider is not Onlyboxes', async () => {
@@ -369,12 +371,102 @@ describe('credsRouter inject on Onlyboxes', () => {
 
     await caller.inject({ keys: ['Openrouter'], topicId: 'topic-1' });
 
-    expect(mockPersonalCredsInject).toHaveBeenCalledWith({
-      keys: ['Openrouter'],
-      sandbox: true,
+    expect(mockCredsInject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keys: ['Openrouter'],
+        sandbox: true,
+        topicId: 'topic-1',
+        userId: 'user-1',
+      }),
+    );
+    expect(mockInjectCredsIntoOnlyboxesSandbox).not.toHaveBeenCalled();
+  });
+
+  // Regression: this route forwarded only keys/sandbox/topicId/userId and
+  // signed no storage claim, so the client-executor path always injected into
+  // a throwaway sandbox, never the topic's persistent environment or drive.
+  it('resolves mode, instance and claim server-side and signs the claim', async () => {
+    const { MarketService } = await import('@/server/services/market');
+    mockResolveSandboxSessionConfig.mockResolvedValue({
+      claim: { key: 'u-user-1' },
+      drive: 'personal',
+      environment: 'inst-1',
+      mode: 'persistent',
+    });
+    const { credsRouter } = await import('./creds');
+
+    const caller = credsRouter.createCaller({ userId: 'user-1' } as any);
+    await caller.inject({ keys: ['FOO'], topicId: 'topic-1', userId: 'someone-else' });
+
+    expect(mockResolveSandboxSessionConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ topicId: 'topic-1', userId: 'user-1' }),
+    );
+    expect(MarketService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        userInfo: expect.objectContaining({
+          sandboxStorage: { key: 'u-user-1' },
+          userId: 'user-1',
+        }),
+      }),
+    );
+    expect(mockCredsInject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keys: ['FOO'],
+        sandbox: true,
+        sandboxInstanceId: 'inst-1',
+        sandboxMode: 'persistent',
+        topicId: 'topic-1',
+        userId: 'user-1',
+      }),
+    );
+  });
+
+  // Market rewrites ~/.creds/env on every inject, so the route merges the
+  // listing afterwards. That merge must run in the sandbox the credentials
+  // were just written into: without the placement and the signed claim it
+  // would open (or replace) a throwaway sandbox instead.
+  it('merges ~/.creds/env in the same sandbox the credentials were injected into', async () => {
+    const { MarketService } = await import('@/server/services/market');
+    mockResolveSandboxSessionConfig.mockResolvedValue({
+      claim: { key: 'u-user-1' },
+      cwd: '/workspace/project',
+      drive: 'personal',
+      environment: 'inst-1',
+      mode: 'persistent',
+      workingDir: '/home/user/project',
+    });
+    const { credsRouter } = await import('./creds');
+
+    const caller = credsRouter.createCaller({ userId: 'user-1' } as any);
+    await caller.inject({ keys: ['FOO'], topicId: 'topic-1' });
+
+    expect(mockMarketSandboxProvider).toHaveBeenCalledTimes(1);
+    const { options, callTool } = mockMarketSandboxProvider.mock.instances[0] as any;
+    expect(options).toMatchObject({
+      sandboxCwd: '/workspace/project',
+      sandboxInstanceId: 'inst-1',
+      sandboxMode: 'persistent',
+      sandboxWorkingDir: '/home/user/project',
       topicId: 'topic-1',
       userId: 'user-1',
     });
-    expect(mockInjectCredsIntoOnlyboxesSandbox).not.toHaveBeenCalled();
+    // The claim-signed service, not the request's unsigned one.
+    expect(options.marketService).toBe(vi.mocked(MarketService).mock.results.at(-1)?.value);
+    expect(callTool).toHaveBeenCalledWith('runCommand', {
+      command: expect.stringContaining('~/.creds/.env.ledger'),
+    });
+  });
+
+  it('skips sandbox resolution when not injecting into a sandbox', async () => {
+    const { credsRouter } = await import('./creds');
+
+    const caller = credsRouter.createCaller({ userId: 'user-1' } as any);
+    await caller.inject({ keys: ['FOO'], sandbox: false, topicId: 'topic-1' });
+
+    expect(mockResolveSandboxSessionConfig).not.toHaveBeenCalled();
+    expect(mockCredsInject).toHaveBeenCalledWith(
+      expect.objectContaining({ sandbox: false, sandboxMode: undefined }),
+    );
+    expect(mockMarketSandboxProvider).not.toHaveBeenCalled();
   });
 });

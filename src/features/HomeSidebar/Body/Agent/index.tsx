@@ -1,6 +1,5 @@
 'use client';
 
-import { ContextMenuTrigger, Flexbox } from '@lobehub/ui';
 import {
   AccordionHeader,
   AccordionItem,
@@ -8,15 +7,16 @@ import {
   accordionStyles,
   AccordionTrigger,
   ActionIcon,
+  ContextMenuTrigger,
+  cx,
+  Flexbox,
   Spin,
-  Text,
-} from '@lobehub/ui/base-ui';
-import { cx } from 'antd-style';
+} from '@lobehub/ui';
 import { ArrowRight } from 'lucide-react';
 import React, { memo, type MouseEvent, Suspense, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
+import SectionTitle, { useSectionTriggerStyle } from '@/features/NavPanel/components/SectionTitle';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useFetchAgentLabels } from '@/hooks/useFetchAgentLabels';
@@ -34,25 +34,26 @@ interface AgentProps {
 
 const Agent = memo<AgentProps>(({ itemKey }) => {
   const { t } = useTranslation('common');
+  const sectionTriggerStyle = useSectionTriggerStyle();
   const { isRevalidating } = useFetchAgentList();
   // Keep the label registry warm so the per-item "Labels" submenu opens populated.
   useFetchAgentLabels();
-  // In workspace mode the section pairs with the "Private" bucket, so the
-  // public/shared agents are labeled "Public" to make the contrast obvious.
-  // Personal mode has no such duality — keep the existing "Agents" label.
-  const activeWorkspaceId = useActiveWorkspaceId();
-  const titleKey = activeWorkspaceId ? 'navPanel.publicAgents' : 'navPanel.agent';
-
+  // One "Agents" section in both modes. In a workspace it lists shared and
+  // private rows together (private ones carry a lock icon).
   const { openConfigGroupModal } = useAgentModal();
 
-  // Create menu items
+  // One create menu in both modes. In a workspace each dialog (agent, group,
+  // external agent) carries its own "Private / Workspace" field, defaulting to
+  // private, so the menu no longer splits entries by visibility.
   const { createTopLevelMenuItems, isLoading } = useCreateMenuItems();
-
   const addMenuItems = useMemo(() => createTopLevelMenuItems(), [createTopLevelMenuItems]);
 
-  const handleOpenConfigGroupModal = useCallback(() => {
-    openConfigGroupModal();
-  }, [openConfigGroupModal]);
+  const handleOpenConfigGroupModal = useCallback(
+    (scope?: 'private' | 'public') => {
+      openConfigGroupModal(scope);
+    },
+    [openConfigGroupModal],
+  );
 
   const dropdownMenu = useAgentActionsDropdownMenu({
     openConfigGroupModal: handleOpenConfigGroupModal,
@@ -72,11 +73,9 @@ const Agent = memo<AgentProps>(({ itemKey }) => {
     <AccordionItem value={itemKey}>
       <ContextMenuTrigger items={dropdownMenu}>
         <AccordionHeader>
-          <AccordionTrigger style={{ paddingBlock: 4, paddingInline: '8px 4px' }}>
+          <AccordionTrigger style={sectionTriggerStyle}>
             <Flexbox horizontal align="center" gap={4}>
-              <Text ellipsis fontSize={12} type={'secondary'} weight={500}>
-                {t(titleKey)}
-              </Text>
+              <SectionTitle>{t('navPanel.agent')}</SectionTitle>
               {isRevalidating && <Spin size="small" variant="network" />}
             </Flexbox>
           </AccordionTrigger>

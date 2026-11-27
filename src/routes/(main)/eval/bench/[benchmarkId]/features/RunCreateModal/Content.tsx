@@ -1,40 +1,38 @@
 'use client';
 
 import { AGENT_PROFILE_URL, DEFAULT_INBOX_AVATAR, INBOX_SESSION_ID } from '@lobechat/const';
-import { Flexbox } from '@lobehub/ui';
 import {
   Accordion,
   ActionIcon,
-  Avatar,
+  createStaticStyles,
+  cssVar,
+  Flexbox,
   Input,
   InputNumber,
   Select,
   Text,
   toast,
   useModalContext,
-} from '@lobehub/ui/base-ui';
-import { Form, useForm, useWatch } from '@lobehub/ui/base-ui/form';
-import { createStaticStyles, cssVar } from 'antd-style';
+} from '@lobehub/ui';
+import { Form, useForm, useWatch } from '@lobehub/ui/form';
 import { SquareArrowOutUpRight } from 'lucide-react';
 import { type FC, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
+import AgentAvatar from '@/components/AgentAvatar';
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { buildWorkspaceAwarePath } from '@/features/Workspace/workspaceAwarePath';
 import { agentService } from '@/services/agent';
-import { useEvalStore } from '@/store/eval';
+import { datasetSelectors, useEvalStore } from '@/store/eval';
 
 const DEFAULT_MAX_STEPS = 100;
 const DEFAULT_TIMEOUT_MINUTES = 30;
 const MAX_TIMEOUT_MINUTES = 240;
 
 const styles = createStaticStyles(({ css }) => ({
-  agentSelect: css`
-    .ant-select-content-value {
-      height: 22px !important;
-    }
-  `,
   hint: css`
     display: inline-block;
     margin-block-start: 4px;
@@ -106,8 +104,10 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
   const activeWorkspaceSlug = useActiveWorkspaceSlug();
   const createRun = useEvalStore((s) => s.createRun);
   const startRun = useEvalStore((s) => s.startRun);
-  const datasetList = useEvalStore((s) => s.datasetList);
+  const datasetList = useEvalStore(datasetSelectors.datasetList(benchmarkId));
   const isDatasetMode = !!datasetId && !!datasetName;
+  /** Create failure shown below the form; the modal stays open with the user's input. */
+  const [error, setError] = useState<InlineErrorState | null>(null);
   const form = useForm<RunCreateFormValues>({
     initialValues: {
       datasetId: datasetId && !isDatasetMode ? datasetId : undefined,
@@ -115,6 +115,7 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
       maxSteps: DEFAULT_MAX_STEPS,
       timeoutMinutes: DEFAULT_TIMEOUT_MINUTES,
     },
+    onValuesChange: () => setError(null),
   });
   const kValue = useWatch(form, 'k') ?? 1;
 
@@ -124,7 +125,9 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
   useEffect(() => {
     setLoadingAgents(true);
     agentService
-      .queryAgents()
+      // The inbox is added locally as `inboxAgent` just below; asking the query
+      // for it as well would offer Lobe AI twice under two different ids.
+      .queryAgents({ includeInbox: false })
       .then((list) => setAgents(list as AgentOption[]))
       .finally(() => setLoadingAgents(false));
   }, []);
@@ -145,9 +148,12 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
       allAgents.map((agent) => ({
         label: (
           <span style={{ alignItems: 'center', display: 'inline-flex', gap: 8 }}>
-            <Avatar
+            <AgentAvatar
+              agentId={agent.id}
               avatar={agent.avatar || undefined}
               background={agent.backgroundColor || undefined}
+              name={agent.title || undefined}
+              shape={'circle'}
               size={20}
               title={agent.title || ''}
             />
@@ -178,17 +184,14 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
       const { valid } = await form.validate();
       if (!valid) return;
       const values = form.getValues();
+      setError(null);
       onLoadingChange?.(true);
       try {
         const maxSteps = values.maxSteps ?? DEFAULT_MAX_STEPS;
         const timeoutMinutes = values.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES;
         const k = values.k ?? 1;
         const run = await createRun({
-          config: {
-            k,
-            maxSteps,
-            timeout: timeoutMinutes * 60_000,
-          },
+          config: { k, maxSteps, timeout: timeoutMinutes * 60_000 },
           datasetId: (isDatasetMode ? datasetId : values.datasetId)!,
           experimentId,
           name: values.name,
@@ -207,11 +210,10 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
           navigate(`/eval/bench/${benchmarkId}/runs/${run.id}`);
         }
         close();
-      } catch (error) {
-        // createRun failure: toast and keep the modal open for retry (ux Act).
-        toast.error(
-          error instanceof Error && error.message ? error.message : t('run.create.error'),
-        );
+      } catch (cause) {
+        // createRun failure: keep the modal open and show the reason inline for retry.
+        console.error('Failed to create eval run:', cause);
+        setError(toInlineError(t('run.create.failedRetry'), cause));
       } finally {
         onLoadingChange?.(false);
       }
@@ -266,7 +268,6 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
         <Select
           allowClear
           showSearch
-          className={styles.agentSelect}
           loading={loadingAgents}
           options={agentOptions}
           placeholder={t('run.create.agent.placeholder')}
@@ -376,6 +377,7 @@ const RunCreateContent: FC<RunCreateContentProps> = ({
           },
         ]}
       />
+      {error && <InlineErrorText detail={error.detail}>{error.summary}</InlineErrorText>}
     </Form>
   );
 };

@@ -1,8 +1,8 @@
-import { Block, Flexbox, Icon } from '@lobehub/ui';
-import { Button, Text } from '@lobehub/ui/base-ui';
+import { Block, Button, Flexbox, Icon, Text } from '@lobehub/ui';
 import { MailCheck, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import InlineErrorText from '@/components/InlineErrorText';
 import AuthCard from '@/features/AuthCard';
 
 export type SentEmailType = 'magicLink' | 'resetPassword';
@@ -11,6 +11,8 @@ export interface SignInEmailSentStepProps {
   email: string;
   onBack: () => void;
   onResend: () => Promise<void>;
+  /** Why the last resend failed, shown right under the Resend button */
+  sendError?: string;
   sending: boolean;
   type: SentEmailType;
 }
@@ -19,6 +21,7 @@ export const SignInEmailSentStep = ({
   email,
   onBack,
   onResend,
+  sendError,
   sending,
   type,
 }: SignInEmailSentStepProps) => {
@@ -66,6 +69,7 @@ export const SignInEmailSentStep = ({
         >
           {t('betterAuth.signin.emailSent.resend')}
         </Button>
+        {sendError && <InlineErrorText>{sendError}</InlineErrorText>}
       </Flexbox>
     </AuthCard>
   );

@@ -1,13 +1,23 @@
 'use client';
 
-import { Flexbox, Icon } from '@lobehub/ui';
-import { ActionIcon, Button, Input, Text, TextArea, toast } from '@lobehub/ui/base-ui';
-import { createStaticStyles, cssVar } from 'antd-style';
+import { isRecord } from '@lobechat/utils/object';
+import {
+  ActionIcon,
+  Button,
+  createStaticStyles,
+  cssVar,
+  Flexbox,
+  Icon,
+  Input,
+  Text,
+  TextArea,
+} from '@lobehub/ui';
 import { BracesIcon, CheckIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useIMECompositionEvent } from '@/hooks/useIMECompositionEvent';
+import { densityVars } from '@/styles/densityVars';
 
 import { describeError } from './errorMessage';
 
@@ -20,7 +30,7 @@ const styles = createStaticStyles(({ css }) => ({
   `,
   row: css`
     padding-block: 8px;
-    padding-inline: 12px;
+    padding-inline: ${densityVars.contentGap};
 
     & + & {
       border-block-start: 1px solid ${cssVar.colorBorderSecondary};
@@ -38,7 +48,7 @@ const styles = createStaticStyles(({ css }) => ({
    */
   empty: css`
     padding-block: 32px;
-    padding-inline: 16px;
+    padding-inline: ${densityVars.cardPadding};
     border: 1px dashed ${cssVar.colorBorder};
     border-radius: ${cssVar.borderRadiusLG};
   `,
@@ -53,8 +63,9 @@ type Entry = [string, string];
 /**
  * Parse `.env`-style text: one `KEY=value` per line, blank lines and `#`
  * comments skipped, an optional `export ` prefix and a matching pair of quotes
- * around the value dropped. Later lines win over earlier ones with the same
- * key, as they would when a shell sources the file.
+ * around the value dropped. Quoted values keep literal backslashes; JSON
+ * escaping belongs to the separate JSON editor format. Later duplicate keys win,
+ * as they would when a shell sources the file.
  *
  * @returns the entries, or the 1-based number of the first line that is not a
  *   `KEY=value` pair
@@ -76,11 +87,33 @@ export const parseDotenv = (text: string): { entries: Entry[] } | { line: number
   return { entries: [...entries.entries()] };
 };
 
-/** The inverse, for the raw editor's starting text. */
-export const formatDotenv = (entries: Entry[]) =>
-  entries
-    .map(([key, value]) => `${key}=${/[\s#"']/.test(value) ? JSON.stringify(value) : value}`)
-    .join('\n');
+/** JSON is unambiguous for editing escapes; .env imports retain literal semantics. */
+export const formatRawVariables = (entries: Entry[]) =>
+  JSON.stringify(Object.fromEntries(entries), null, 2);
+
+export const getRawVariableFormat = (text: string) =>
+  /^[{[]/.test(text.trimStart()) ? 'json' : 'dotenv';
+
+export const parseJsonVariables = (
+  text: string,
+): { entries: Entry[] } | { error: 'jsonSyntax' | 'jsonValues' } => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { error: 'jsonSyntax' };
+  }
+  if (!isRecord(value)) return { error: 'jsonValues' };
+  const entries: Entry[] = [];
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== 'string') return { error: 'jsonValues' };
+    entries.push([key, entry]);
+  }
+  return { entries };
+};
+
+export const parseRawVariables = (text: string) =>
+  getRawVariableFormat(text) === 'json' ? parseJsonVariables(text) : parseDotenv(text);
 
 /**
  * One variable, either as a row or open for editing. Key and value edit
@@ -96,15 +129,19 @@ const EnvRow = memo<{
   const { t: tCommon } = useTranslation('common');
   const [draft, setDraft] = useState<Entry | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Shown under the row being edited (or beside the row whose remove failed), not as a toast. */
+  const [error, setError] = useState('');
   const { compositionProps, isComposingRef } = useIMECompositionEvent();
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
+    setError('');
     try {
       await action();
       setDraft(null);
-    } catch (error) {
-      toast.error(describeError(error, t, t('environments.saveFailed')));
+    } catch (err) {
+      console.error('[EnvironmentVariables] Save failed:', err);
+      setError(describeError(err, t, t('environments.saveFailedRetry')));
     } finally {
       setBusy(false);
     }
@@ -112,19 +149,29 @@ const EnvRow = memo<{
 
   if (draft) {
     return (
-      <Flexbox horizontal align={'center'} className={styles.row} gap={8}>
+      <Flexbox horizontal align={'center'} className={styles.row} gap={8} wrap={'wrap'}>
         <Input
           autoFocus
+          aria-invalid={!!error}
+          data-invalid={error ? '' : undefined}
           placeholder={'NODE_ENV'}
           style={{ flex: 1 }}
           value={draft[0]}
-          onChange={(event) => setDraft([event.target.value, draft[1]])}
+          onChange={(event) => {
+            setDraft([event.target.value, draft[1]]);
+            setError('');
+          }}
         />
         <Input
+          aria-invalid={!!error}
+          data-invalid={error ? '' : undefined}
           placeholder={'production'}
           style={{ flex: 1 }}
           value={draft[1]}
-          onChange={(event) => setDraft([draft[0], event.target.value])}
+          onChange={(event) => {
+            setDraft([draft[0], event.target.value]);
+            setError('');
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') setDraft(null);
             // Not the Enter that confirms an IME candidate: a value typed in
@@ -148,14 +195,22 @@ const EnvRow = memo<{
           icon={XIcon}
           size={'small'}
           title={tCommon('cancel')}
-          onClick={() => setDraft(null)}
+          onClick={() => {
+            setDraft(null);
+            setError('');
+          }}
         />
+        {error && (
+          <Text fontSize={12} role={'alert'} style={{ flexBasis: '100%' }} type={'danger'}>
+            {error}
+          </Text>
+        )}
       </Flexbox>
     );
   }
 
   return (
-    <Flexbox horizontal align={'center'} className={styles.row} gap={8}>
+    <Flexbox horizontal align={'center'} className={styles.row} gap={8} wrap={'wrap'}>
       <span className={styles.mono} style={{ flex: 1 }}>
         {entry[0]}
       </span>
@@ -178,6 +233,11 @@ const EnvRow = memo<{
         title={t('environments.form.removeEnv')}
         onClick={() => run(onRemove)}
       />
+      {error && (
+        <Text fontSize={12} role={'alert'} style={{ flexBasis: '100%' }} type={'danger'}>
+          {error}
+        </Text>
+      )}
     </Flexbox>
   );
 });
@@ -203,14 +263,22 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
   const [adding, setAdding] = useState<Entry | null>(null);
   const [raw, setRaw] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * Errors of the raw editor and of the new-variable row. Both surfaces stay open on failure, so
+   * the reason renders under the textarea / inside the row instead of a corner toast.
+   */
+  const [rawError, setRawError] = useState('');
+  const [addError, setAddError] = useState('');
   const { compositionProps, isComposingRef } = useIMECompositionEvent();
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, setError: (message: string) => void) => {
     setBusy(true);
+    setError('');
     try {
       await action();
-    } catch (error) {
-      toast.error(describeError(error, t, t('environments.saveFailed')));
+    } catch (err) {
+      console.error('[EnvironmentVariables] Save failed:', err);
+      setError(describeError(err, t, t('environments.saveFailedRetry')));
     } finally {
       setBusy(false);
     }
@@ -218,20 +286,26 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
 
   const openRaw = () => {
     setAdding(null);
-    setRaw(formatDotenv(entries));
+    setAddError('');
+    setRawError('');
+    setRaw(formatRawVariables(entries));
   };
 
   const saveRaw = () => {
     if (raw === null) return;
-    const parsed = parseDotenv(raw);
+    const parsed = parseRawVariables(raw);
+    if ('error' in parsed) {
+      setRawError(t(`environments.form.${parsed.error}`));
+      return;
+    }
     if ('line' in parsed) {
-      toast.error(t('environments.form.rawInvalid', { line: parsed.line }));
+      setRawError(t('environments.form.rawInvalid', { line: parsed.line }));
       return;
     }
     void run(async () => {
       await onSave(parsed.entries);
       setRaw(null);
-    });
+    }, setRawError);
   };
 
   const addNew = () =>
@@ -240,15 +314,14 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
       const key = adding[0].trim();
       await onSave([...entries.filter(([k]) => k !== key), [key, adding[1]]]);
       setAdding(null);
-    });
+    }, setAddError);
 
   return (
     <Flexbox gap={12}>
       <Flexbox horizontal align={'center'} gap={8} justify={'space-between'}>
-        <Text weight={600}>
-          {entries.length === 0
-            ? t('environments.form.env')
-            : t('environments.form.envCount', { count: entries.length })}
+        {/* The section around this editor carries its title; only the count is said here. */}
+        <Text fontSize={12} type={'secondary'}>
+          {entries.length > 0 && t('environments.form.envCount', { count: entries.length })}
         </Text>
         <Flexbox horizontal align={'center'} gap={4}>
           {raw === null ? (
@@ -266,14 +339,24 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
                 icon={<Icon icon={PlusIcon} />}
                 size={'small'}
                 type={'primary'}
-                onClick={() => setAdding(['', ''])}
+                onClick={() => {
+                  setAddError('');
+                  setAdding(['', '']);
+                }}
               >
                 {t('environments.form.addEnv')}
               </Button>
             </>
           ) : (
             <>
-              <Button disabled={busy} size={'small'} onClick={() => setRaw(null)}>
+              <Button
+                disabled={busy}
+                size={'small'}
+                onClick={() => {
+                  setRaw(null);
+                  setRawError('');
+                }}
+              >
                 {t('cancel', { ns: 'common' })}
               </Button>
               <Button loading={busy} size={'small'} type={'primary'} onClick={saveRaw}>
@@ -286,16 +369,32 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
 
       {raw !== null ? (
         <Flexbox gap={6}>
+          <Text fontSize={12} weight={500}>
+            {t('environments.form.rawFormat', {
+              format: getRawVariableFormat(raw) === 'json' ? 'JSON' : '.env',
+            })}
+          </Text>
           <TextArea
             autoFocus
+            aria-invalid={!!rawError}
+            aria-label={t('environments.form.rawEditor')}
             classNames={{ input: styles.editor }}
-            placeholder={'NODE_ENV=production\nAPI_URL=https://example.com'}
+            data-invalid={rawError ? '' : undefined}
+            placeholder={'{\n  "NODE_ENV": "production"\n}'}
             rows={Math.min(16, Math.max(6, raw.split('\n').length + 1))}
             value={raw}
-            onChange={(event) => setRaw(event.target.value)}
+            onChange={(event) => {
+              setRaw(event.target.value);
+              setRawError('');
+            }}
           />
+          {rawError && (
+            <Text fontSize={12} role={'alert'} type={'danger'}>
+              {rawError}
+            </Text>
+          )}
           <Text fontSize={12} type={'secondary'}>
-            {t('environments.form.rawEditorHint')}
+            {t('environments.form.rawFormatsHint')}
           </Text>
         </Flexbox>
       ) : entries.length === 0 && !adding ? (
@@ -313,19 +412,29 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
       ) : (
         <div className={styles.list}>
           {adding && (
-            <Flexbox horizontal align={'center'} className={styles.row} gap={8}>
+            <Flexbox horizontal align={'center'} className={styles.row} gap={8} wrap={'wrap'}>
               <Input
                 autoFocus
+                aria-invalid={!!addError}
+                data-invalid={addError ? '' : undefined}
                 placeholder={'NODE_ENV'}
                 style={{ flex: 1 }}
                 value={adding[0]}
-                onChange={(event) => setAdding([event.target.value, adding[1]])}
+                onChange={(event) => {
+                  setAdding([event.target.value, adding[1]]);
+                  setAddError('');
+                }}
               />
               <Input
+                aria-invalid={!!addError}
+                data-invalid={addError ? '' : undefined}
                 placeholder={'production'}
                 style={{ flex: 1 }}
                 value={adding[1]}
-                onChange={(event) => setAdding([adding[0], event.target.value])}
+                onChange={(event) => {
+                  setAdding([adding[0], event.target.value]);
+                  setAddError('');
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') setAdding(null);
                   if (event.key === 'Enter' && !isComposingRef.current && adding[0].trim()) {
@@ -347,8 +456,16 @@ const EnvironmentVariables = memo<EnvironmentVariablesProps>(({ entries, onSave 
                 icon={XIcon}
                 size={'small'}
                 title={t('cancel', { ns: 'common' })}
-                onClick={() => setAdding(null)}
+                onClick={() => {
+                  setAdding(null);
+                  setAddError('');
+                }}
               />
+              {addError && (
+                <Text fontSize={12} role={'alert'} style={{ flexBasis: '100%' }} type={'danger'}>
+                  {addError}
+                </Text>
+              )}
             </Flexbox>
           )}
           {entries.map(([key, value]) => (

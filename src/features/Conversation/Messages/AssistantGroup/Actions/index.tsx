@@ -12,16 +12,23 @@ import {
 
 const DEFAULT_BAR_WITH_TOOLS: MessageActionSlot[] = ['delAndRegenerate', 'copy'];
 const DEFAULT_BAR: MessageActionSlot[] = ['edit', 'copy'];
+// Ids for tracing sit one level down, as in the single assistant message menu.
+const ADVANCED_GROUP: MessageActionSlot = {
+  children: ['copyMessageId', 'copyOperationId'],
+  key: 'advanced',
+};
 const DEFAULT_MENU: MessageActionSlot[] = [
   'edit',
   'copy',
-  'copyOperationId',
   'comments',
+  'fork',
   'branching',
   'collapse',
   'divider',
   'share',
   'select',
+  'divider',
+  ADVANCED_GROUP,
   'divider',
   'regenerate',
   'del',
@@ -40,7 +47,7 @@ const NO_TEXT_BLOCK_MENU: MessageActionSlot[] = [
   'divider',
   'del',
   'divider',
-  'copyOperationId',
+  ADVANCED_GROUP,
 ];
 
 interface GroupActionsProps {

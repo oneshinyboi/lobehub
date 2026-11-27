@@ -1,4 +1,4 @@
-import { DEFAULT_AVATAR, DEFAULT_INBOX_AVATAR } from '@lobechat/const';
+import { INBOX_SESSION_ID } from '@lobechat/const';
 import { agentDisplayName } from '@lobechat/types';
 import { GroupBotSquareIcon } from '@lobehub/ui/icons';
 import { Command } from 'cmdk';
@@ -6,8 +6,11 @@ import { Bot, Image } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import AgentAvatar from '@/components/AgentAvatar';
 import Avatar from '@/components/Avatar';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { useAgentStore } from '@/store/agent';
+import { agentSelectors } from '@/store/agent/selectors';
 import { useHomeStore } from '@/store/home';
 import { homeAgentListSelectors } from '@/store/home/selectors';
 
@@ -21,10 +24,15 @@ const AskAIMenu = memo(() => {
   const navigate = useWorkspaceAwareNavigate();
   const { handleAskLobeAI, handleAIPainting, closeCommandMenu } = useCommandMenu();
   const { search } = useCommandMenuContext();
+  const inboxTitle = useAgentStore(agentSelectors.inboxAgentDisplayName);
+  const inboxAvatar = useAgentStore(agentSelectors.inboxAgentAvatar);
 
   // Get agent list (limit to first 20 items for simplicity)
   const allAgents = useHomeStore(homeAgentListSelectors.allAgents);
-  const agents = allAgents.filter((item) => item.type === 'agent').slice(0, 20);
+  // Lobe AI has its own fixed row above, so its list item is left out.
+  const agents = allAgents
+    .filter((item) => item.type === 'agent' && item.slug !== INBOX_SESSION_ID)
+    .slice(0, 20);
 
   const heading = search.trim()
     ? t('cmdk.askAIHeading', { query: `"${search.trim()}"` })
@@ -61,9 +69,9 @@ const AskAIMenu = memo(() => {
   return (
     <Command.Group heading={heading}>
       <Command.Item value="lobe-ai" onSelect={handleAskLobeAI}>
-        <Avatar emojiScaleWithBackground avatar={DEFAULT_INBOX_AVATAR} shape="square" size={18} />
+        <Avatar emojiScaleWithBackground avatar={inboxAvatar} shape="square" size={18} />
         <div className={styles.itemContent}>
-          <div className={styles.itemLabel}>Lobe AI</div>
+          <div className={styles.itemLabel}>{inboxTitle}</div>
         </div>
       </Command.Item>
       <Command.Item value="agent-builder" onSelect={handleAgentBuilder}>
@@ -93,9 +101,9 @@ const AskAIMenu = memo(() => {
           value={`agent-${agent.id}`}
           variant="detailed"
           icon={
-            <Avatar
-              emojiScaleWithBackground
-              avatar={typeof agent.avatar === 'string' ? agent.avatar : DEFAULT_AVATAR}
+            <AgentAvatar
+              agentId={agent.id}
+              avatar={typeof agent.avatar === 'string' ? agent.avatar : undefined}
               name={agentDisplayName(agent, t('defaultAgent'))}
               shape="square"
               size={18}

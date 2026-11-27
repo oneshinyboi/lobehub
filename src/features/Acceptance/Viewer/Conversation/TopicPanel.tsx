@@ -1,12 +1,11 @@
 'use client';
 
-import { Flexbox } from '@lobehub/ui';
-import { ActionIcon, Avatar, Text } from '@lobehub/ui/base-ui';
-import { cssVar } from 'antd-style';
+import { ActionIcon, cssVar, Flexbox, Text } from '@lobehub/ui';
 import { PanelRightClose } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import Avatar from '@/components/Avatar';
 import { TopicChatDrawerBody } from '@/features/AgentTasks/AgentTaskDetail/TopicChatDrawer';
 
 import type { OriginTopicPanelProps } from './originConversation';
@@ -38,7 +37,7 @@ const TopicPanel = memo<OriginTopicPanelProps>(
             background={agentBackgroundColor ?? undefined}
             size={20}
           />
-          <Text ellipsis strong style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+          <Text ellipsis strong style={{ flex: 1, minWidth: 0, fontSize: 14 }}>
             {title}
           </Text>
           <ActionIcon

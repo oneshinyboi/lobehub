@@ -10,8 +10,10 @@ export type FileLoaderType =
   | 'pdf'
   | 'markdown'
   | 'doc'
+  | 'docx'
   | 'text'
   | 'latex'
   | 'csv'
+  | 'excel'
   | 'epub'
   | 'ipynb';

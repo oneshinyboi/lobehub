@@ -102,13 +102,17 @@ export class AcpStdioClient {
     if (this.child) return;
     if (this.closed) throw new Error('ACP stdio client is closed');
 
-    const spawnPlan = await resolveCliSpawnPlan(this.options.commandPath, this.options.args);
+    const spawnPlan = await resolveCliSpawnPlan(
+      this.options.commandPath,
+      this.options.args,
+      this.options.env,
+    );
     if (this.closed) throw new Error('ACP stdio client is closed');
     const detached = process.platform !== 'win32' && (this.options.detached ?? true);
     const child = spawnManaged(spawnPlan.command, spawnPlan.args, {
       cwd: this.options.cwd,
       detached,
-      env: this.options.env,
+      env: spawnPlan.env ?? this.options.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
@@ -158,7 +162,9 @@ export class AcpStdioClient {
       if (timeoutMs !== false) {
         pending.timeout = setTimeout(() => {
           this.pendingRequests.delete(String(id));
-          reject(new Error(`ACP request timed out: ${method}`));
+          reject(
+            Object.assign(new Error(`ACP request timed out: ${method}`), { code: 'ETIMEDOUT' }),
+          );
         }, timeoutMs);
         pending.timeout.unref?.();
       }
@@ -177,12 +183,13 @@ export class AcpStdioClient {
     if (this.fatalError) throw this.fatalError;
   }
 
-  close(signal: NodeJS.Signals = 'SIGTERM'): void {
+  /** Pass null when the host already delivered the terminating OS signal. */
+  close(signal: NodeJS.Signals | null = 'SIGTERM'): void {
     if (this.closed) return;
     this.closed = true;
     this.stdoutBuffer = '';
     this.rejectPendingRequests(new Error('ACP stdio client closed by host'));
-    this.shutdownProcess(signal);
+    if (signal !== null) this.shutdownProcess(signal);
   }
 
   private consumeStdout(chunk: Buffer): void {

@@ -3,7 +3,11 @@ import { useCallback, useMemo } from 'react';
 import urlJoin from 'url-join';
 
 import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
+import type { TriggerFilter } from '@/features/AgentTopicManager/types';
+import { TOPICS_TRIGGER_PARAM } from '@/features/AgentTopicManager/urlState';
+import { getProjectTopicPath } from '@/features/Projects/Layout/navigation';
 import { useFocusTopicPopup } from '@/features/TopicPopupGuard/useTopicPopupsRegistry';
+import { buildWorkspaceAwarePath } from '@/features/Workspace/workspaceAwarePath';
 import { useActiveLocation } from '@/hooks/useActiveLocation';
 import { useActiveRouteParams } from '@/hooks/useActiveRouteParams';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
@@ -11,6 +15,7 @@ import { useChatStore } from '@/store/chat';
 import { useGlobalStore } from '@/store/global';
 
 import { buildPrefixedAgentRoutePath, parseAgentPathname } from '../../utils/agentPathname';
+import { useTopicListScope } from '../TopicListScope';
 
 /**
  * Hook to handle topic navigation with automatic route detection
@@ -21,6 +26,7 @@ interface NavigateToTopicOptions {
 }
 
 export const useTopicNavigation = () => {
+  const scope = useTopicListScope();
   const { pathname } = useActiveLocation();
   const agentRoute = useMemo(() => parseAgentPathname(pathname), [pathname]);
   const params = useActiveRouteParams<{ aid?: string; topicId?: string }>();
@@ -59,6 +65,16 @@ export const useTopicNavigation = () => {
 
   const navigateToTopic = useCallback(
     async (topicId?: string, options?: NavigateToTopicOptions) => {
+      if (scope && topicId) {
+        router.push(
+          buildWorkspaceAwarePath(
+            getProjectTopicPath(scope.projectId, topicId),
+            activeWorkspaceSlug,
+          ),
+        );
+        toggleConfig(false);
+        return;
+      }
       if (!options?.skipPopupFocus) {
         await focusTopicPopup(topicId);
       }
@@ -80,6 +96,7 @@ export const useTopicNavigation = () => {
       toggleConfig(false);
     },
     [
+      scope,
       activeWorkspaceSlug,
       agentRoute,
       focusTopicPopup,
@@ -94,7 +111,7 @@ export const useTopicNavigation = () => {
   return {
     focusTopicPopup,
     isInAgentSubRoute: isInAgentSubRoute(),
-    isInTopicContextRoute: isInTopicContextRoute(),
+    isInTopicContextRoute: !!scope || isInTopicContextRoute(),
     navigateToTopic,
     routeTopicId,
     urlTopicId,
@@ -105,7 +122,32 @@ export const useNavigateToAgentTopics = () => {
   const router = useQueryRoute();
 
   return useCallback(
-    (agentId: string) => router.push(urlJoin('/agent', agentId, 'topics')),
+    /** `trigger` opens the page with only that source picked instead of the default. */
+    (agentId: string, trigger?: TriggerFilter) => {
+      const url = urlJoin('/agent', agentId, 'topics');
+      return trigger
+        ? router.push(url, { query: { [TOPICS_TRIGGER_PARAM]: trigger } })
+        : router.push(url);
+    },
     [router],
   );
+};
+
+/**
+ * Opens the active agent's full topic page from the sidebar. Leaves the current
+ * topic first so the page doesn't open over a stale chat. `undefined` until an
+ * agent is active, so callers can hide the entry instead of rendering a no-op.
+ */
+export const useOpenActiveAgentTopics = () => {
+  const [activeAgentId, switchTopic] = useChatStore((s) => [s.activeAgentId, s.switchTopic]);
+  const navigateToAgentTopics = useNavigateToAgentTopics();
+
+  return useMemo(() => {
+    if (!activeAgentId) return undefined;
+
+    return () => {
+      switchTopic(null, { skipRefreshMessage: true });
+      navigateToAgentTopics(activeAgentId);
+    };
+  }, [activeAgentId, navigateToAgentTopics, switchTopic]);
 };

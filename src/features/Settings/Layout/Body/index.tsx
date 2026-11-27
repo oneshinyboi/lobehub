@@ -1,11 +1,11 @@
 'use client';
 
-import { Flexbox } from '@lobehub/ui';
-import { Accordion, Text } from '@lobehub/ui/base-ui';
-import { memo, useMemo } from 'react';
+import { Accordion, Flexbox, Text } from '@lobehub/ui';
+import { Fragment, memo, useMemo } from 'react';
 import { Link } from 'react-router';
 
 import NavItem from '@/features/NavPanel/components/NavItem';
+import SectionTitle, { useSectionTriggerStyle } from '@/features/NavPanel/components/SectionTitle';
 import { getTabUrl, SearchSection } from '@/features/SettingsSearch';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useActiveLocation } from '@/hooks/useActiveLocation';
@@ -13,9 +13,14 @@ import { SettingsTabs } from '@/store/global/initialState';
 import { isModifierClick } from '@/utils/navigation';
 
 import { SettingsGroupKey, useCategory } from '../../hooks/useCategory';
+import { useExpandedSettingsGroups } from '../../hooks/useExpandedSettingsGroups';
+import { usePersonalSettingsSearchScope } from '../../hooks/useSettingsSearchScope';
+import MemorySubNav from '../../memory/MemorySubNav';
 
 const Body = memo(() => {
+  const sectionTriggerStyle = useSectionTriggerStyle();
   const categoryGroups = useCategory();
+  const searchScope = usePersonalSettingsSearchScope(categoryGroups);
   const navigate = useWorkspaceAwareNavigate();
   const location = useActiveLocation();
 
@@ -29,53 +34,57 @@ const Body = memo(() => {
     return SettingsTabs.Profile;
   }, [location.pathname]);
 
+  // Only Memory lists its sub-pages here; other tabs keep their row active on `:sub`.
+  const activeSubSection =
+    activeTab === SettingsTabs.Memory ? location.pathname.split('/')[3] : undefined;
+
+  const { expandedGroups, onExpandedGroupsChange } = useExpandedSettingsGroups(
+    categoryGroups,
+    activeTab,
+    SettingsGroupKey.System,
+  );
+
   return (
     <Flexbox gap={4} paddingInline={4}>
-      <SearchSection>
+      <SearchSection scope={searchScope}>
         <Accordion
           gap={8}
           indicatorPlacement="inline"
-          styles={{ trigger: { paddingBlock: 4, paddingInline: '8px 4px' } }}
-          defaultValue={[
-            SettingsGroupKey.Account,
-            SettingsGroupKey.General,
-            SettingsGroupKey.Subscription,
-            SettingsGroupKey.Agent,
-            SettingsGroupKey.System,
-            SettingsGroupKey.Developer,
-          ]}
+          styles={{ trigger: sectionTriggerStyle }}
+          value={expandedGroups}
           items={categoryGroups.map((group) => ({
             key: group.key,
-            title: (
-              <Text ellipsis fontSize={12} type={'secondary'} weight={500}>
-                {group.title}
-              </Text>
-            ),
+            title: <SectionTitle>{group.title}</SectionTitle>,
             children: (
               <Flexbox gap={1} paddingBlock={1}>
                 {group.items.map((item) => {
                   const url = item.href ?? getTabUrl(item.key);
                   return (
-                    <Link
-                      key={item.key}
-                      to={url}
-                      onClick={(e) => {
-                        if (isModifierClick(e)) return;
-                        e.preventDefault();
-                        navigate(url);
-                      }}
-                    >
-                      <NavItem
-                        active={activeTab === item.key}
-                        icon={item.icon}
-                        title={item.label}
-                      />
-                    </Link>
+                    <Fragment key={item.key}>
+                      <Link
+                        to={url}
+                        onClick={(e) => {
+                          if (isModifierClick(e)) return;
+                          e.preventDefault();
+                          navigate(url);
+                        }}
+                      >
+                        <NavItem
+                          active={activeTab === item.key && !activeSubSection}
+                          icon={item.icon}
+                          title={item.label}
+                        />
+                      </Link>
+                      {item.key === SettingsTabs.Memory && activeTab === item.key && (
+                        <MemorySubNav activeSection={activeSubSection} />
+                      )}
+                    </Fragment>
                   );
                 })}
               </Flexbox>
             ),
           }))}
+          onValueChange={(keys) => onExpandedGroupsChange(keys as SettingsGroupKey[])}
         />
       </SearchSection>
     </Flexbox>

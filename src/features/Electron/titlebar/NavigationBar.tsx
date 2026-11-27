@@ -1,30 +1,29 @@
 'use client';
 
 import { useWatchBroadcast } from '@lobechat/electron-client-ipc';
-import { Flexbox, Popover, Tooltip } from '@lobehub/ui';
-import { ActionIcon } from '@lobehub/ui/base-ui';
-import { createStaticStyles } from 'antd-style';
+import { ActionIcon, createStaticStyles, Flexbox, Popover, Tooltip } from '@lobehub/ui';
 import { ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import ToggleLeftPanelButton from '@/features/NavPanel/ToggleLeftPanelButton';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
-import { electronSystemService } from '@/services/electron/system';
 import { useElectronStore } from '@/store/electron';
 import { useGlobalStore } from '@/store/global';
 import type { GlobalState } from '@/store/global/initialState';
 import { systemStatusSelectors } from '@/store/global/selectors';
 import { getHomeStoreState } from '@/store/home';
 import { electronStylish } from '@/styles/electron';
-import { isMacOS } from '@/utils/platform';
+import { getPlatform, isMacOS } from '@/utils/platform';
 
 import { useNavigationHistory } from '../navigation/useNavigationHistory';
-import { getMacTrafficLightPadding } from './layout';
 import RecentlyViewed from './RecentlyViewed';
 import { useTrayMenuSync } from './TrayMenu/useTrayMenuSync';
+import { useMacTrafficLightPadding } from './useMacTrafficLightPadding';
+import WindowsAppMenu from './WindowsAppMenu';
 
 const isMac = isMacOS();
+const isWindows = getPlatform() === 'Windows';
 const COLLAPSED_NAVIGATION_BAR_WIDTH = 150;
 const MAC_COLLAPSED_NAVIGATION_BAR_WIDTH = 116;
 
@@ -38,9 +37,7 @@ const navPanelSelector = (s: GlobalState) => {
   return systemStatusSelectors.leftPanelWidth(s);
 };
 
-const useNavPanelWidth = () => {
-  return useGlobalStore(navPanelSelector);
-};
+const useNavPanelWidth = () => useGlobalStore(navPanelSelector);
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   clock: css`
@@ -51,6 +48,10 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   `,
   root: css`
     transition: width 0.2s ${cssVar.motionEaseOut};
+
+    &[data-resizing] {
+      transition: none;
+    }
 
     @media (prefers-reduced-motion: reduce) {
       transition: none;
@@ -64,14 +65,10 @@ const NavigationBar = memo(() => {
   const navigate = useWorkspaceAwareNavigate();
   const { canGoBack, canGoForward, goBack, goForward } = useNavigationHistory();
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [isWindowFullScreen, setIsWindowFullScreen] = useState(false);
   const activeRecentScope = useElectronStore((state) => state.activeRecentScope);
 
   const leftPanelWidth = useNavPanelWidth();
-
-  useWatchBroadcast('windowFullscreenChanged', ({ isFullScreen }) => {
-    if (isMac) setIsWindowFullScreen(isFullScreen);
-  });
+  const navPanelResizing = useGlobalStore((s) => !!s.isNavPanelResizing);
 
   useWatchBroadcast('openRecentlyViewed', () => setHistoryOpen(true));
 
@@ -80,27 +77,6 @@ const NavigationBar = memo(() => {
     navigate(homePath, { escape: true });
     getHomeStoreState().openAllAgentsDrawer();
   });
-
-  useEffect(() => {
-    if (!isMac) return;
-
-    let disposed = false;
-
-    const syncFullScreenState = async () => {
-      try {
-        const isFullScreen = await electronSystemService.isWindowFullScreen();
-        if (!disposed) setIsWindowFullScreen(isFullScreen);
-      } catch {
-        if (!disposed) setIsWindowFullScreen(false);
-      }
-    };
-
-    void syncFullScreenState();
-
-    return () => {
-      disposed = true;
-    };
-  }, []);
 
   // Toggle history popover
   const toggleHistoryOpen = useCallback(() => {
@@ -127,7 +103,7 @@ const NavigationBar = memo(() => {
   const tooltipContent = t('navigation.recentView');
 
   const isLeftPanelVisible = leftPanelWidth > 0;
-  const macTrafficLightPadding = getMacTrafficLightPadding(isMac, isWindowFullScreen);
+  const macTrafficLightPadding = useMacTrafficLightPadding();
   const collapsedWidth =
     (isMac ? MAC_COLLAPSED_NAVIGATION_BAR_WIDTH : COLLAPSED_NAVIGATION_BAR_WIDTH) +
     macTrafficLightPadding;
@@ -140,9 +116,10 @@ const NavigationBar = memo(() => {
       horizontal
       align="center"
       className={styles.root}
+      data-resizing={navPanelResizing || undefined}
       data-width={leftPanelWidth}
       gap={8}
-      justify={isMac ? 'space-between' : 'end'}
+      justify={isMac || isWindows ? 'space-between' : 'end'}
       style={{
         paddingLeft: macTrafficLightPadding,
         paddingRight: 8,
@@ -151,13 +128,13 @@ const NavigationBar = memo(() => {
         width: navigationWidth,
       }}
     >
-      {/* The persistent panel toggle is macOS-only; other platforms keep the
-          in-page toggles, so the titlebar shows just the navigation controls. */}
+      {/* macOS keeps the sidebar toggle here. Windows uses the app icon as the menu. */}
       {isMac && (
         <Flexbox horizontal align="center" className={electronStylish.nodrag}>
           <ToggleLeftPanelButton forceVisible id={NAV_TOGGLE_ID} size="small" />
         </Flexbox>
       )}
+      {isWindows && <WindowsAppMenu />}
       <Flexbox horizontal align="center" className={electronStylish.nodrag} gap={2}>
         <ActionIcon disabled={!canGoBack} icon={ArrowLeft} size="small" onClick={goBack} />
         <ActionIcon disabled={!canGoForward} icon={ArrowRight} size="small" onClick={goForward} />

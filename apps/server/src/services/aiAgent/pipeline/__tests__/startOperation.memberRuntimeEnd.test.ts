@@ -11,6 +11,8 @@ const sourceExecutor = { capabilities: ['llm_relay@1'], clientId: 'tab-a', provi
 const setup = (sourceAccepts: boolean) => {
   const calls: string[] = [];
   const agentRuntimeService = {
+    acceptsArtboardWorks: vi.fn(async () => sourceAccepts),
+    acceptsFileWorks: vi.fn(async () => sourceAccepts),
     acceptsMemberRuntimeEnd: vi.fn(async () => {
       calls.push('read-source');
       return sourceAccepts;
@@ -20,6 +22,7 @@ const setup = (sourceAccepts: boolean) => {
       calls.push('read-executor');
       return sourceExecutor;
     }),
+    getOperationEditingGroupId: vi.fn(async () => undefined),
   };
   const deps = {
     agentRuntimeService,
@@ -45,20 +48,45 @@ const setup = (sourceAccepts: boolean) => {
       approvalClaim: {},
       approvalSourceToolMessageIds: [],
       autoStart: true,
-      discovery: {
-        credentialFactsPromise: Promise.resolve(undefined),
-        modelMediaCapabilities: {},
-        toolsResult: { enabledToolIds: [] },
+      init: {
+        discovery: {
+          credentialFactsPromise: Promise.resolve(undefined),
+          modelMediaCapabilities: {},
+          toolsResult: { enabledToolIds: [] },
+        },
+        initialContext: {},
+        prep: { allMessages: [], deviceSystemInfo: {} },
       },
-      initialContext: {},
       operationId: 'op-new',
-      prep: { allMessages: [], deviceSystemInfo: {} },
       updateAbortedAssistantMessage: vi.fn(),
       userInterventionConfig: { approvalMode: 'manual' },
       ...extra,
     }) as any;
   return { agentRuntimeService, calls, ctx, deps, input };
 };
+
+describe('startOperation artboard Works continuation', () => {
+  it('inherits the parked client capability before starting an approval continuation', async () => {
+    const { agentRuntimeService, ctx, deps, input } = setup(true);
+    await startOperation(deps, ctx, input({ approvalSourceOperationId: 'op-parked' }));
+    expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ acceptsArtboardWorks: true }),
+    );
+  });
+
+  it('does not upgrade a released client from a parked operation capability', async () => {
+    const { agentRuntimeService, ctx, deps, input } = setup(true);
+    await startOperation(
+      deps,
+      ctx,
+      input({ acceptsArtboardWorks: false, approvalSourceOperationId: 'op-parked' }),
+    );
+    expect(agentRuntimeService.acceptsArtboardWorks).not.toHaveBeenCalled();
+    expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ acceptsArtboardWorks: false }),
+    );
+  });
+});
 
 describe('startOperation › member_runtime_end declaration', () => {
   it('records the calling client declaration on the new operation', async () => {
@@ -70,6 +98,16 @@ describe('startOperation › member_runtime_end declaration', () => {
       expect.objectContaining({ acceptsMemberRuntimeEnd: true }),
     );
     expect(agentRuntimeService.acceptsMemberRuntimeEnd).not.toHaveBeenCalled();
+  });
+
+  it('forwards the resumed LLM baseline to the new operation', async () => {
+    const { agentRuntimeService, ctx, deps, input } = setup(false);
+
+    await startOperation(deps, ctx, input({ initialLlmCalls: 3, initialStepCount: 7 }));
+
+    expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ initialLlmCalls: 3, initialStepCount: 7 }),
+    );
   });
 
   // The v2 approval endpoint starts the continuation server-side, without the
@@ -143,6 +181,34 @@ describe('startOperation › relay executor', () => {
     expect(agentRuntimeService.getLlmExecutor).not.toHaveBeenCalled();
     expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
       expect.objectContaining({ llmExecutor: declared }),
+    );
+  });
+});
+
+describe('startOperation › file_works declaration', () => {
+  it('carries the parked operation declaration over to an approval continuation', async () => {
+    const { agentRuntimeService, ctx, deps, input } = setup(true);
+
+    await startOperation(deps, ctx, input({ approvalSourceOperationId: 'op-parked' }));
+
+    expect(agentRuntimeService.acceptsFileWorks).toHaveBeenCalledWith('op-parked');
+    expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ acceptsFileWorks: true }),
+    );
+  });
+
+  it('keeps a resuming client explicit false over the parked operation declaration', async () => {
+    const { agentRuntimeService, ctx, deps, input } = setup(true);
+
+    await startOperation(
+      deps,
+      ctx,
+      input({ acceptsFileWorks: false, approvalSourceOperationId: 'op-parked' }),
+    );
+
+    expect(agentRuntimeService.acceptsFileWorks).not.toHaveBeenCalled();
+    expect(agentRuntimeService.createOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ acceptsFileWorks: false }),
     );
   });
 });

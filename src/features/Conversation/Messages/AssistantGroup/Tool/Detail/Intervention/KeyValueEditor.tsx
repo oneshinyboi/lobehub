@@ -1,39 +1,28 @@
-import { Flexbox, Icon } from '@lobehub/ui';
-import { ActionIcon, Button, Input, toast } from '@lobehub/ui/base-ui';
-import { Form, useForm } from '@lobehub/ui/base-ui/form';
-import { createStaticStyles } from 'antd-style';
+import { ActionIcon, Button, Flexbox, Icon, Input } from '@lobehub/ui';
+import { Form, useForm } from '@lobehub/ui/form';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
 import { LucidePlus, LucideTrash } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-const styles = createStaticStyles(({ css, cssVar }) => ({
-  form: css`
-    position: relative;
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 
-    width: 100%;
-    min-width: 600px;
-    padding: 8px;
-    border-radius: ${cssVar.borderRadiusLG};
-  `,
-  error: css`
-    font-size: 12px;
-    color: ${cssVar.colorError};
-  `,
-  formItem: css`
-    margin-block-end: 4px;
-  `,
-  input: css`
-    font-family: ${cssVar.fontFamilyCode};
-    font-size: 12px;
-  `,
-  row: css`
-    position: relative;
-  `,
-  title: css`
-    margin-block-end: 4px;
-    color: ${cssVar.colorTextTertiary};
-  `,
-}));
+const styles = stylex.create({
+  form: {
+    position: 'relative',
+    width: '100%',
+    minWidth: '600px',
+    padding: '8px',
+    borderRadius: cssVar.borderRadiusLG,
+  },
+  error: { fontSize: '12px', color: cssVar.colorError },
+  formItem: { marginBlockEnd: '4px' },
+  input: { fontFamily: cssVar.fontFamilyCode, fontSize: '12px' },
+  row: { position: 'relative' },
+  title: { marginBlockEnd: '4px', color: cssVar.colorTextTertiary },
+});
 
 interface KeyValueItem {
   id: string;
@@ -81,19 +70,24 @@ const KeyValueEditor = memo<KeyValueEditorProps>(({ initialValue = {}, onFinish,
   }, [initialValue, form]);
 
   const [updating, setUpdating] = useState(false);
+  /** Failure of the save itself, shown above the buttons; validation errors show on their own fields. */
+  const [saveError, setSaveError] = useState<InlineErrorState | null>(null);
   const handleFinish = async () => {
     setUpdating(true);
+    setSaveError(null);
     try {
-      const { errors, valid } = await form.validate();
-      if (!valid) throw errors;
+      // Invalid fields (empty / duplicate key) render their own error, so nothing else is shown.
+      const { valid } = await form.validate();
+      if (!valid) return;
       const values = form.getValues();
       const record = formListToRecord(values.items || []);
       await onFinish?.(record);
-    } catch (errorInfo) {
-      console.error('Validation Failed:', errorInfo);
-      toast.error(t('updateArgs.formValidationFailed') || 'Please check the form for errors.');
+    } catch (error) {
+      console.error('Failed to save tool arguments:', error);
+      setSaveError(toInlineError(t('updateArgs.saveFailed'), error));
+    } finally {
+      setUpdating(false);
     }
-    setUpdating(false);
   };
 
   const handleCancel = () => {
@@ -107,8 +101,8 @@ const KeyValueEditor = memo<KeyValueEditorProps>(({ initialValue = {}, onFinish,
   };
 
   return (
-    <Form autoComplete="off" className={styles.form} form={form} gap={0}>
-      <Flexbox horizontal className={styles.title} gap={8}>
+    <Form autoComplete="off" className={stylex.props(styles.form).className} form={form} gap={0}>
+      <Flexbox horizontal className={stylex.props(styles.title).className} gap={8}>
         <Flexbox flex={1}>key</Flexbox>
         <Flexbox flex={4}>value</Flexbox>
       </Flexbox>
@@ -119,7 +113,7 @@ const KeyValueEditor = memo<KeyValueEditorProps>(({ initialValue = {}, onFinish,
               <Flexbox
                 horizontal
                 align="center"
-                className={styles.row}
+                className={stylex.props(styles.row).className}
                 gap={8}
                 key={key}
                 width={'100%'}
@@ -131,26 +125,26 @@ const KeyValueEditor = memo<KeyValueEditorProps>(({ initialValue = {}, onFinish,
                   validate={validateKey}
                   validateOn={'change'}
                   render={({ error, onBlur, onChange, value }) => (
-                    <Flexbox className={styles.formItem} flex={1}>
+                    <Flexbox className={stylex.props(styles.formItem).className} flex={1}>
                       <Input
                         allowClear
                         aria-invalid={error ? true : undefined}
-                        className={styles.input}
+                        className={stylex.props(styles.input).className}
                         placeholder={t('updateArgs.form.key')}
                         value={value}
                         variant={'filled'}
                         onBlur={onBlur}
                         onChange={(e) => onChange(e.target.value)}
                       />
-                      {error && <div className={styles.error}>{error}</div>}
+                      {error && <div {...stylex.props(styles.error)}>{error}</div>}
                     </Flexbox>
                   )}
                 />
-                <Flexbox className={styles.formItem} flex={4}>
+                <Flexbox className={stylex.props(styles.formItem).className} flex={4}>
                   <Form.Field bare name={`${name}.value`}>
                     <Input
                       allowClear
-                      className={styles.input}
+                      className={stylex.props(styles.input).className}
                       placeholder={t('updateArgs.form.value')}
                       variant={'filled'}
                     />
@@ -167,6 +161,11 @@ const KeyValueEditor = memo<KeyValueEditorProps>(({ initialValue = {}, onFinish,
                 />
               </Flexbox>
             ))}
+            {saveError && (
+              <InlineErrorText detail={saveError.detail} style={{ marginTop: 8 }}>
+                {saveError.summary}
+              </InlineErrorText>
+            )}
             <Flexbox horizontal gap={8} justify={'space-between'} style={{ marginTop: 8 }}>
               <Button
                 icon={<Icon icon={LucidePlus} />}

@@ -55,6 +55,7 @@ interface CreateServerCallLlmAttemptInput {
   clientIp?: string;
   ctx: RuntimeExecutorContext;
   events: AgentEvent[];
+  getToolActivationContext?: ChatMethodOptions['getToolActivationContext'];
   maxAttempts: number;
   messageCount: number;
   model: string;
@@ -103,7 +104,13 @@ const KNOWN_ERROR_CODES = new Set<string>([
 export const createStreamExecutionError = (errorData: unknown) => {
   const errorRecord = toRecord(errorData);
   const body = toRecord(errorRecord?.body);
-  const message = pickString(errorRecord?.message) ?? pickString(body?.message);
+  // A provider runtime error (`AgentRuntimeError.chat`, also what a relayed
+  // device call reports) keeps its text under `error.message`.
+  const nestedError = toRecord(errorRecord?.error);
+  const message =
+    pickString(errorRecord?.message) ??
+    pickString(body?.message) ??
+    pickString(nestedError?.message);
   const error = new Error(
     message ? `LLM stream error: ${message}` : `LLM stream error: ${JSON.stringify(errorData)}`,
   );
@@ -122,7 +129,18 @@ export const createStreamExecutionError = (errorData: unknown) => {
       // fall through to the Error itself and emit `body: { body: {…}, type,
       // errorType }`, pushing `provider` / `context` one level below the
       // `ChatMessageError.body` contract that the renderers read.
-      Object.assign(error, { errorType, ...(body ? { _responseBody: body } : {}) });
+      // Without a `body`, the provider error itself is the display body, shaped
+      // as `/webapi/chat` answers it (`{ error, provider }`): the Ollama card
+      // reads `body.error.message` to offer downloading a missing model.
+      const responseBody =
+        body ??
+        (nestedError
+          ? {
+              error: nestedError,
+              ...(errorRecord.provider === undefined ? {} : { provider: errorRecord.provider }),
+            }
+          : undefined);
+      Object.assign(error, { errorType, ...(responseBody ? { _responseBody: responseBody } : {}) });
     }
   }
 
@@ -137,6 +155,7 @@ export class ServerCallLlmAttempt {
   private completion?: OnFinishData;
   private readonly contentPartEvents: ContentPartData[] = [];
   private readonly ctx: RuntimeExecutorContext;
+  private readonly getToolActivationContext?: ChatMethodOptions['getToolActivationContext'];
   private finishReason?: string;
   private grounding: GroundingSearch | null = null;
   private readonly imageList: ChatImageItem[] = [];
@@ -166,6 +185,7 @@ export class ServerCallLlmAttempt {
     attempt,
     blobStore,
     chatPayload,
+    getToolActivationContext,
     clientIp,
     ctx,
     events,
@@ -183,6 +203,7 @@ export class ServerCallLlmAttempt {
   }: CreateServerCallLlmAttemptInput) {
     this.attempt = attempt;
     this.chatPayload = chatPayload;
+    this.getToolActivationContext = getToolActivationContext;
     this.ctx = ctx;
     this.maxAttempts = maxAttempts;
     this.messageCount = messageCount;
@@ -331,6 +352,7 @@ export class ServerCallLlmAttempt {
         },
       },
       diagnostics: this.runtimeDiagnostics,
+      getToolActivationContext: this.getToolActivationContext,
       metadata: this.runtimeMetadata,
       signal: this.ctx.abortSignal,
       user: this.ctx.userId,

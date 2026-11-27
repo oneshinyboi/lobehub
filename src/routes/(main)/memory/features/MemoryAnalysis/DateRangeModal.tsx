@@ -1,21 +1,23 @@
 'use client';
 
-import { Flexbox } from '@lobehub/ui';
 import {
   Button,
   createModal,
-  DateRangePicker,
-  type DateRangeValue,
+  DayjsDateRangePicker as DateRangePicker,
+  type DayjsDateRangeValue,
+  Flexbox,
   type ModalInstance,
   Text,
   toast,
   useModalContext,
-} from '@lobehub/ui/base-ui';
-import dayjs from 'dayjs';
+} from '@lobehub/ui';
+import dayjs, { type Dayjs } from 'dayjs';
 import { t as i18nT } from 'i18next';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import { useMemoryAnalysisAsyncTask } from '@/routes/(main)/memory/features/MemoryAnalysis/useTask';
 import { memoryExtractionService } from '@/services/userMemory/extraction';
 
@@ -24,37 +26,40 @@ const DateRangeContent = memo(() => {
   const { close } = useModalContext();
 
   const { refresh } = useMemoryAnalysisAsyncTask();
-  const [range, setRange] = useState<DateRangeValue>([null, null]);
+  const [range, setRange] = useState<DayjsDateRangeValue | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** Request failure, shown above the buttons: the modal stays open with the chosen range. */
+  const [error, setError] = useState<InlineErrorState | undefined>();
 
-  const disabledDate = useCallback((current: Date) => dayjs(current).isAfter(dayjs(), 'day'), []);
+  const disabledDate = useCallback((current: Dayjs) => current.isAfter(dayjs(), 'day'), []);
 
   const footerNote = useMemo(
     () =>
-      range[0] || range[1]
+      range?.[0] || range?.[1]
         ? t('analysis.modal.rangeSelected', {
-            end: range[1] ? dayjs(range[1]).format('YYYY/MM/DD') : t('analysis.range.end'),
-            start: range[0] ? dayjs(range[0]).format('YYYY/MM/DD') : t('analysis.range.start'),
+            end: range[1] ? range[1].format('YYYY/MM/DD') : t('analysis.range.end'),
+            start: range[0] ? range[0].format('YYYY/MM/DD') : t('analysis.range.start'),
           })
         : t('analysis.modal.rangePlaceholder'),
     [range, t],
   );
 
   const handleSubmit = async () => {
+    setError(undefined);
     setSubmitting(true);
     try {
-      const [from, to] = range;
+      const [from, to] = range ?? [null, null];
       const result = await memoryExtractionService.requestFromChatTopics({
-        fromDate: from ?? undefined,
-        toDate: to ? dayjs(to).endOf('day').toDate() : undefined,
+        fromDate: from?.toDate(),
+        toDate: to?.endOf('day').toDate(),
       });
 
       await refresh();
       toast.success(result.deduped ? t('analysis.toast.deduped') : t('analysis.toast.started'));
       close();
-    } catch (error) {
-      console.error(error);
-      toast.error(t('analysis.toast.failed'));
+    } catch (err) {
+      console.error(err);
+      setError(toInlineError(t('analysis.toast.failed'), err));
     } finally {
       setSubmitting(false);
     }
@@ -70,12 +75,16 @@ const DateRangeContent = memo(() => {
           format={'YYYY/MM/DD'}
           style={{ width: '100%' }}
           value={range}
-          onChange={setRange}
+          onChange={(value) => {
+            setRange(value);
+            setError(undefined);
+          }}
         />
         <Text fontSize={12} type={'secondary'}>
           {footerNote}
         </Text>
       </Flexbox>
+      {error && <InlineErrorText detail={error.detail}>{error.summary}</InlineErrorText>}
       <Flexbox horizontal gap={8} justify={'flex-end'}>
         <Button disabled={submitting} onClick={close}>
           {t('analysis.modal.cancel')}

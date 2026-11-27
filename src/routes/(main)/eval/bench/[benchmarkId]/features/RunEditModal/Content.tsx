@@ -2,38 +2,36 @@
 
 import { AGENT_PROFILE_URL, DEFAULT_INBOX_AVATAR, INBOX_SESSION_ID } from '@lobechat/const';
 import type { AgentEvalRunStatus, EvalRunInputConfig } from '@lobechat/types';
-import { Flexbox } from '@lobehub/ui';
 import {
   Accordion,
   ActionIcon,
-  Avatar,
+  createStaticStyles,
+  cssVar,
+  Flexbox,
   Input,
   InputNumber,
   Select,
   toast,
   useModalContext,
-} from '@lobehub/ui/base-ui';
-import { Form, useForm, useWatch } from '@lobehub/ui/base-ui/form';
-import { createStaticStyles, cssVar } from 'antd-style';
+} from '@lobehub/ui';
+import { Form, useForm, useWatch } from '@lobehub/ui/form';
 import { SquareArrowOutUpRight } from 'lucide-react';
 import { type FC, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
 import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
+import AgentAvatar from '@/components/AgentAvatar';
+import InlineErrorText from '@/components/InlineErrorText';
+import { type InlineErrorState, toInlineError } from '@/components/InlineErrorText/errorDetail';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { buildWorkspaceAwarePath } from '@/features/Workspace/workspaceAwarePath';
 import { agentService } from '@/services/agent';
-import { useEvalStore } from '@/store/eval';
+import { datasetSelectors, useEvalStore } from '@/store/eval';
 
 const MAX_TIMEOUT_MINUTES = 240;
 
 const styles = createStaticStyles(({ css }) => ({
-  agentSelect: css`
-    .ant-select-content-value {
-      height: 22px !important;
-    }
-  `,
   hint: css`
     display: inline-block;
     margin-block-start: 4px;
@@ -72,9 +70,11 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
   const activeWorkspaceSlug = useActiveWorkspaceSlug();
   const { benchmarkId } = useParams<{ benchmarkId: string }>();
   const updateRun = useEvalStore((s) => s.updateRun);
-  const datasetList = useEvalStore((s) => s.datasetList);
+  const datasetList = useEvalStore(datasetSelectors.datasetList(benchmarkId));
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
+  /** Save failure shown below the form; the modal stays open with the user's input. */
+  const [error, setError] = useState<InlineErrorState | null>(null);
 
   const canChangeConfig = run?.status === 'idle';
   const isFinished = run?.status === 'completed';
@@ -88,7 +88,9 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
     if (!canChangeConfig) return;
     setLoadingAgents(true);
     agentService
-      .queryAgents()
+      // The inbox is added locally as `inboxAgent` just below; asking the query
+      // for it as well would offer Lobe AI twice under two different ids.
+      .queryAgents({ includeInbox: false })
       .then((list) => setAgents(list as AgentOption[]))
       .finally(() => setLoadingAgents(false));
   }, [canChangeConfig]);
@@ -109,9 +111,12 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
       allAgents.map((agent) => ({
         label: (
           <span style={{ alignItems: 'center', display: 'inline-flex', gap: 8 }}>
-            <Avatar
+            <AgentAvatar
+              agentId={agent.id}
               avatar={agent.avatar || undefined}
               background={agent.backgroundColor || undefined}
+              name={agent.title || undefined}
+              shape={'circle'}
               size={20}
               title={agent.title || ''}
             />
@@ -138,6 +143,7 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
   );
 
   const handleFinish = async (values: any) => {
+    setError(null);
     onLoadingChange?.(true);
     try {
       const config: EvalRunInputConfig = {};
@@ -155,8 +161,9 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
       });
       toast.success(t('run.edit.success'));
       close();
-    } catch {
-      toast.error(t('run.edit.error'));
+    } catch (cause) {
+      console.error('Failed to update eval run:', cause);
+      setError(toInlineError(t('run.edit.failedRetry'), cause));
     } finally {
       onLoadingChange?.(false);
     }
@@ -171,6 +178,7 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
       timeoutMinutes: run.config?.timeout ? run.config.timeout / 60_000 : undefined,
     },
     onSubmit: handleFinish,
+    onValuesChange: () => setError(null),
   });
   const kValue = useWatch(form, 'k') ?? 1;
 
@@ -208,7 +216,6 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
           <Select
             allowClear
             showSearch
-            className={styles.agentSelect}
             loading={loadingAgents}
             options={agentOptions}
             placeholder={t('run.create.agent.placeholder')}
@@ -296,6 +303,7 @@ const RunEditContent: FC<RunEditContentProps> = ({ formId, onLoadingChange, run 
           },
         ]}
       />
+      {error && <InlineErrorText detail={error.detail}>{error.summary}</InlineErrorText>}
     </Form>
   );
 };

@@ -1,32 +1,38 @@
 import { type GridProps, type IconProps } from '@lobehub/ui';
-import { Flexbox, Grid, Icon } from '@lobehub/ui';
-import { Text } from '@lobehub/ui/base-ui';
-import { createStaticStyles, cssVar, cx, responsive } from 'antd-style';
+import { cx, Flexbox, Grid, Icon, Text } from '@lobehub/ui';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import { media } from '@lobehub/ui/stylex/media.stylex';
+import * as stylex from '@stylexjs/stylex';
 import { type CSSProperties, type ReactNode } from 'react';
 import { memo } from 'react';
 
-import CopyableLabel from '../CopyableLabel';
+import { sx } from '@/styles/sx';
 
-const styles = createStaticStyles(({ css, cssVar }) => {
-  return {
-    bordered: css`
-      overflow: hidden;
-      border: 1px solid ${cssVar.colorBorderSecondary};
-      border-radius: ${cssVar.borderRadiusLG};
-      ${responsive.sm} {
-        background: ${cssVar.colorBgContainer};
-      }
-    `,
-    cell: css`
-      overflow: hidden;
-      box-shadow: 0 0 0 0.5px ${cssVar.colorBorderSecondary};
-    `,
-    label: css`
-      overflow: hidden;
-      border-inline-end: 1px solid ${cssVar.colorBorderSecondary};
-      background: ${cssVar.colorFillQuaternary};
-    `,
-  };
+import CopyableLabel from '../CopyableLabel';
+import { copyableRevealMarker } from '../CopyableLabel/markers.stylex';
+
+const styles = stylex.create({
+  bordered: {
+    overflow: 'hidden',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: cssVar.colorBorderSecondary,
+    borderRadius: cssVar.borderRadiusLG,
+    backgroundColor: { default: null, [media.sm]: cssVar.colorBgContainer },
+    backgroundImage: { default: null, [media.sm]: 'none' },
+  },
+  cell: {
+    overflow: 'hidden',
+    boxShadow: `0 0 0 0.5px ${cssVar.colorBorderSecondary}`,
+  },
+  label: {
+    overflow: 'hidden',
+    borderInlineEndWidth: '1px',
+    borderInlineEndStyle: 'solid',
+    borderInlineEndColor: cssVar.colorBorderSecondary,
+    backgroundColor: cssVar.colorFillQuaternary,
+    backgroundImage: 'none',
+  },
 });
 
 export interface DescriptionItem {
@@ -56,6 +62,8 @@ interface DescriptionsProps extends Omit<GridProps, 'children' | 'wrap'> {
   };
   items: DescriptionItem[];
   labelWidth?: number | string;
+  /** Show each copyable value's copy button only while its row is hovered or focused. */
+  revealCopyOnHover?: boolean;
   styles?: {
     item?: CSSProperties;
     label?: CSSProperties;
@@ -72,6 +80,7 @@ const Descriptions = memo<DescriptionsProps>(
     className,
     items,
     classNames,
+    revealCopyOnHover,
     styles: customStyles,
     wrap,
     ...rest
@@ -79,19 +88,18 @@ const Descriptions = memo<DescriptionsProps>(
     return (
       <>
         {title && <h3 style={{ marginTop: 12 }}>{title}</h3>}
-        <Grid
-          className={cx(bordered && styles.bordered, className)}
-          gap={0}
-          maxItemWidth={450}
-          {...rest}
-        >
+        <Grid gap={0} maxItemWidth={450} {...sx(bordered && styles.bordered, className)} {...rest}>
           {items.map((item) => (
             <Flexbox
               horizontal
               align={wrap ? 'flex-start' : 'center'}
-              className={cx(bordered && styles.cell, item.className, classNames?.item)}
               flex={1}
               key={item.key}
+              {...sx(
+                bordered && styles.cell,
+                revealCopyOnHover && copyableRevealMarker,
+                cx(item.className, classNames?.item),
+              )}
               style={{
                 overflow: wrap ? undefined : 'hidden',
                 position: 'relative',
@@ -102,9 +110,9 @@ const Descriptions = memo<DescriptionsProps>(
               <Flexbox
                 horizontal
                 align={'center'}
-                className={cx(bordered && styles.label)}
                 flex={'none'}
                 gap={6}
+                {...sx(bordered && styles.label)}
                 paddingBlock={bordered ? 12 : 4}
                 paddingInline={bordered ? 16 : 0}
                 style={{ height: '100%', position: 'relative' }}
@@ -139,6 +147,7 @@ const Descriptions = memo<DescriptionsProps>(
                 {item.copyable ? (
                   <CopyableLabel
                     className={cx(classNames?.value, item.classNames?.value)}
+                    revealCopyOnHover={revealCopyOnHover}
                     style={{ ...customStyles?.value, ...item.styles?.value }}
                     value={item.value ? String(item.value) : '--'}
                     wrap={wrap}

@@ -1,4 +1,4 @@
-import type { DeviceGitLinkedPullRequest, WorkingDirGitState } from '@lobechat/types';
+import type { WorkingDirGitState } from '@lobechat/types';
 
 import { getWorkingDirectoryName, isWorktreeCheckout } from '@/helpers/workingDirectoryPath';
 
@@ -14,7 +14,8 @@ export interface StaleSnapshotView {
   };
   /** True when the recorded checkout was a linked worktree, not the repo itself. */
   isWorktree: boolean;
-  pullRequest?: DeviceGitLinkedPullRequest;
+  /** What the chip shows: the recorded branch, else the dead checkout's name. */
+  label: string;
   /**
    * Where "go back" lands, and whether it is offered at all. Present only when a
    * worktree override can be dropped — if the recorded SOURCE repo is itself the
@@ -56,7 +57,7 @@ export const resolveStaleSnapshot = ({
       ? { key: 'workingDirectory.staleWorktreeSnapshot', values: { name: worktreeName } }
       : { key: 'workingDirectory.staleSnapshot' },
     isWorktree,
-    pullRequest: git.github?.pullRequest ?? undefined,
+    label: git.branch || getWorkingDirectoryName(worktreePath) || worktreePath,
     ...(canReset
       ? { reset: { name: getWorkingDirectoryName(sourcePath), targetPath: sourcePath! } }
       : {}),

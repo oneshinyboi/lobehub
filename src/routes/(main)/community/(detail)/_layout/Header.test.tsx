@@ -6,10 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 import MarkdownRender from '../features/MakedownRender';
 import Header from './Header';
 
-const mocks = vi.hoisted(() => ({
-  useUserProfile: vi.fn(),
-}));
-
 vi.mock('@/features/NavHeader', () => ({
   default: ({ left, right }: { left?: React.ReactNode; right?: React.ReactNode }) => (
     <header>
@@ -33,33 +29,17 @@ vi.mock('@/routes/(main)/community/features/UserAvatar', () => ({
   ),
 }));
 
-vi.mock('@/store/discover', () => ({
-  useDiscoverStore: (
-    selector: (state: { useUserProfile: typeof mocks.useUserProfile }) => unknown,
-  ) => selector({ useUserProfile: mocks.useUserProfile }),
-}));
-
 describe('Community detail Header', () => {
-  it('shows the viewed organization avatar in the right corner', () => {
-    mocks.useUserProfile.mockReturnValue({
-      data: {
-        user: {
-          avatarUrl: 'sad-avatar',
-        },
-      },
-    });
-
+  it('only offers the way back: no store search or account avatar', () => {
     render(
-      <MemoryRouter initialEntries={['/011/community/org/sad']}>
+      <MemoryRouter initialEntries={['/011/marketplace/org/sad']}>
         <Header />
       </MemoryRouter>,
     );
 
-    expect(mocks.useUserProfile).toHaveBeenCalledWith({ username: 'sad' });
-    expect(screen.getByTestId('community-user-avatar')).toHaveAttribute(
-      'data-avatar',
-      'sad-avatar',
-    );
+    expect(screen.getByRole('button')).toBeInTheDocument();
+    expect(screen.queryByTestId('community-search')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('community-user-avatar')).not.toBeInTheDocument();
   });
 });
 

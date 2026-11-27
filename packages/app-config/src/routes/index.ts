@@ -2,11 +2,14 @@ import { type LucideIcon } from 'lucide-react';
 import {
   BrainCircuit,
   FilePenIcon,
+  FolderKanbanIcon,
   Image,
+  LayoutDashboardIcon,
+  LayoutGridPlus,
   LibraryBigIcon,
   ListTodoIcon,
   Settings,
-  ShapesIcon,
+  TargetIcon,
   Video,
 } from 'lucide-react';
 
@@ -37,14 +40,27 @@ export interface NavigationRoute {
  */
 export const NAVIGATION_ROUTES: NavigationRoute[] = [
   {
-    cmdkKey: 'cmdk.community',
-    electronKey: 'navigation.discover',
-    icon: ShapesIcon,
+    // Same label as the sidebar entry (common:tab.marketplace) in every locale.
+    cmdkKey: 'tab.marketplace',
+    electronKey: 'navigation.marketplace',
+    icon: LayoutGridPlus,
     id: 'community',
-    keywords: ['discover', 'market', 'assistant', 'model', 'provider', 'mcp'],
-    keywordsKey: 'cmdk.keywords.community',
-    path: '/community',
-    pathPrefix: '/community',
+    // "community" stays searchable for people who knew the page by its old name.
+    keywords: [
+      'marketplace',
+      'market',
+      'community',
+      'discover',
+      'agent',
+      'skill',
+      'connector',
+      'model',
+      'provider',
+      'mcp',
+    ],
+    keywordsKey: 'cmdk.keywords.marketplace',
+    path: '/marketplace',
+    pathPrefix: '/marketplace',
   },
   {
     cmdkKey: 'cmdk.video',
@@ -106,6 +122,33 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     keywordsKey: 'cmdk.keywords.tasks',
     path: '/tasks',
     pathPrefix: '/tasks',
+  },
+  {
+    cmdkKey: 'tab.projects',
+    electronKey: 'navigation.projects',
+    icon: FolderKanbanIcon,
+    id: 'project',
+    keywords: ['projects', 'workspace', 'team'],
+    path: '/projects',
+    pathPrefix: '/project',
+  },
+  {
+    cmdkKey: 'tab.goals',
+    electronKey: 'navigation.goals',
+    icon: TargetIcon,
+    id: 'goals',
+    keywords: ['goals', 'objective', 'target', 'agent'],
+    path: '/goals',
+    pathPrefix: '/goals',
+  },
+  {
+    cmdkKey: 'tab.dashboard',
+    electronKey: 'navigation.dashboard',
+    icon: LayoutDashboardIcon,
+    id: 'dashboard',
+    keywords: ['dashboard', 'monitor', 'metrics', 'widget'],
+    path: '/dashboard',
+    pathPrefix: '/dashboard',
   },
   {
     cmdkKey: 'cmdk.settings',

@@ -1,7 +1,20 @@
-import { type AgentItem, type AgentRankItem, type LobeAgentConfig } from '@lobechat/types';
+import {
+  type AgentDeleteImpact,
+  type AgentItem,
+  type AgentPluginEntry,
+  type AgentPluginMode,
+  type AgentRankItem,
+  type LobeAgentConfig,
+} from '@lobechat/types';
 import { type PartialDeep } from 'type-fest';
 
 import { lambdaClient } from '@/libs/trpc/client';
+
+/** One of my agents that carries a plugin or skill explicitly, and how. */
+export interface PluginAgentMode {
+  agentId: string;
+  mode: Exclude<AgentPluginMode, 'auto'>;
+}
 
 export const AVAILABLE_AGENTS_CONTEXT_LIMIT = 10;
 export const AVAILABLE_AGENTS_CONTEXT_QUERY_LIMIT = AVAILABLE_AGENTS_CONTEXT_LIMIT + 2;
@@ -11,6 +24,8 @@ export interface AvailableAgentItem {
   backgroundColor: string | null;
   description: string | null;
   id: string;
+  /** Product-owned inbox (Lobe AI). A builtin can never join a chat group. */
+  isInbox?: boolean;
   /** Personal name; resolve the label with `agentDisplayName(item, fallback)`. */
   name: string | null;
   title: string | null;
@@ -107,6 +122,13 @@ interface AgentGroupMembershipImpactRef {
   groupVisible: boolean;
 }
 
+export interface RemoveAgentOptions {
+  /** The user confirmed a warning that other members' content goes with the agent. */
+  acknowledgeForeignContent?: boolean;
+  /** The user confirmed a warning that someone else created the agent. */
+  acknowledgeOtherCreator?: boolean;
+}
+
 class AgentService {
   /**
    * Check if an agent with the given marketIdentifier already exists
@@ -127,8 +149,14 @@ class AgentService {
    * Get an agent by forkedFromIdentifier stored in params
    * @returns agent id if exists, null otherwise
    */
-  getAgentByForkedFromIdentifier = async (forkedFromIdentifier: string): Promise<string | null> => {
-    return lambdaClient.agent.getAgentByForkedFromIdentifier.query({ forkedFromIdentifier });
+  getAgentByForkedFromIdentifier = async (
+    forkedFromIdentifier: string,
+    options?: { virtual?: boolean },
+  ): Promise<string | null> => {
+    return lambdaClient.agent.getAgentByForkedFromIdentifier.query({
+      forkedFromIdentifier,
+      ...options,
+    });
   };
 
   /**
@@ -237,13 +265,38 @@ class AgentService {
   /**
    * Update agent config and return the updated agent data
    */
+  /** Which of my own agents carry a plugin or skill, in one query over their `plugins`. */
+  getPluginAgentModes = async (identifier: string): Promise<PluginAgentMode[]> => {
+    return lambdaClient.agent.getPluginAgentModes.query({ identifier });
+  };
+
+  /**
+   * Sets a plugin or skill's mode on my own agents in one atomic server write.
+   * `auto` removes it; `auto` without `agentIds` removes it from every agent
+   * carrying it. Returns each written agent's new `plugins`.
+   */
+  setPluginMode = async (params: {
+    agentIds?: string[];
+    identifier: string;
+    mode: AgentPluginMode;
+  }): Promise<{ id: string; plugins: AgentPluginEntry[] }[]> => {
+    return lambdaClient.agent.setPluginMode.mutate(params, {
+      context: { showNotification: false },
+    });
+  };
+
   updateAgentConfig = async (
     agentId: string,
     config: PartialDeep<LobeAgentConfig>,
     signal?: AbortSignal,
+    replaceWorkingDirDeviceIds: string[] = [],
   ) => {
     return lambdaClient.agent.updateAgentConfig.mutate(
-      { agentId, value: config },
+      {
+        agentId,
+        replaceWorkingDirDeviceIds,
+        value: config,
+      },
       { context: { showNotification: false }, signal },
     );
   };
@@ -280,8 +333,17 @@ class AgentService {
   /**
    * Remove an agent and its associated session
    */
-  removeAgent = async (agentId: string) => {
-    return lambdaClient.agent.removeAgent.mutate({ agentId });
+  removeAgent = async (agentId: string, options?: RemoveAgentOptions) => {
+    return lambdaClient.agent.removeAgent.mutate({ agentId, ...options });
+  };
+
+  /**
+   * What deleting the agent takes down besides the caller's own work — other
+   * members' topics (counted) and any other foreign content — for the delete
+   * confirmation.
+   */
+  getAgentDeleteImpact = async (agentId: string): Promise<AgentDeleteImpact> => {
+    return lambdaClient.agent.getAgentDeleteImpact.query({ agentId });
   };
 
   /**
@@ -289,6 +351,7 @@ class AgentService {
    * Returns agents with minimal info (id, title, description, avatar, backgroundColor).
    */
   queryAgents = async (params?: {
+    includeInbox?: boolean;
     keyword?: string;
     limit?: number;
     offset?: number;
@@ -302,6 +365,7 @@ class AgentService {
    */
   countAgents = async (params?: {
     endDate?: string;
+    includeInbox?: boolean;
     keyword?: string;
     range?: [string, string];
     startDate?: string;

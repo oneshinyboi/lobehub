@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { DeviceExecutionTarget } from '../agent/agencyConfig';
 import type { AgentModelOverride } from '../agent/modelSelection';
+import type { HeteroPermissionModeDir } from '../heteroPermissionMode';
 import type { Plans } from '../subscription';
 import type { TopicGroupMode, TopicSortBy } from '../topic';
 import type { UserAgentOnboarding } from './agentOnboarding';
@@ -69,6 +70,18 @@ export interface WorkspaceUserPreference {
   /** Per-member Agent/Chat runtime mode for shared workspace agents. */
   agentModeOverrides?: Record<string /* agentId */, boolean>;
   /**
+   * The Claude Code permission mode this member last picked per directory (see
+   * `HeteroPermissionModeDir`), which a new topic there starts in. Written only
+   * through `workspaceUserSettings.setHeteroPermissionModeDir`.
+   */
+  heteroPermissionModeDirs?: HeteroPermissionModeDir[];
+  /**
+   * Directories (`getWorktreeModeKey`) where this member last left the Codex
+   * Plan switch on, which a new Codex topic there starts with. Most recent
+   * first and capped; written only through `workspaceUserSettings.setHeteroPlanModeDir`.
+   */
+  heteroPlanModeDirs?: string[];
+  /**
    * This member's notification preferences for workspace-scoped scenarios
    * (the `workspace` category of the scenario registry). Same shape as the
    * personal `user_settings.notification` bag; missing = every workspace
@@ -113,6 +126,27 @@ export interface WorkspaceUserPreference {
    */
   sidebarHiddenGroupIds?: string[];
   /**
+   * Whether this member's sidebar was set up from the workspace once. The
+   * server does it the first time the member's preference is read:
+   * - a member who joined before team pins were retired keeps the team pins
+   *   (public rows with the shared `pinned` column) as their own pins;
+   * - anyone else gets the workspace's recommended Agents
+   *   (`settings.sidebar.recommendedAgentIds`) added to their sidebar,
+   *   unpinned, through `sidebarAgentVisibilityOverrides`.
+   * Nothing is written while there is nothing to add, so a later list still
+   * reaches the member. Changes to the list never reach a member set up before.
+   */
+  sidebarInitialized?: boolean;
+  /**
+   * Agents / chat groups pinned in this member's merged workspace "Agents"
+   * section, in the member's own order. Personal: it never changes another
+   * member's sidebar. A member who joined before team pins were retired has
+   * them copied in once (see `sidebarInitialized`); after that the member
+   * alone decides what it holds. A private row's own `pinned` column is read
+   * as this member's pin too, since only its creator can see it.
+   */
+  sidebarPinnedItemIds?: string[];
+  /**
    * Per-member pins for sidebar items.
    *
    * @deprecated Pinning is workspace-shared again — it lives on the
@@ -120,6 +154,21 @@ export interface WorkspaceUserPreference {
    *   ignored; nothing reads or writes this map.
    */
   sidebarPinnedOverrides?: Record<string /* itemId */, boolean>;
+  /**
+   * Topic sidebars list only the topics this member created.
+   *
+   * @deprecated The filter is a device-local, per-agent choice now
+   *   (`systemStatus.topicOnlyMineByAgent`). Existing values are ignored;
+   *   nothing reads or writes this key.
+   */
+  topicOnlyMine?: boolean;
+  /**
+   * Directories (`<deviceId>::<path>`, see `getWorktreeModeKey`) where this
+   * member keeps the composer's "New worktree" switch on, most recent first and
+   * capped. Written only through `workspaceUserSettings.setWorktreeModeDir`,
+   * which applies the cap server-side.
+   */
+  worktreeModeDirs?: string[];
 }
 
 export interface LobeUser {
@@ -134,6 +183,11 @@ export interface LobeUser {
 }
 
 export const UserGuideSchema = z.object({
+  /**
+   * Pages and Resources were merged into Docs; set once the notice is acknowledged
+   */
+  docsMerged: z.boolean().optional(),
+
   /**
    * Move the settings button to the avatar dropdown
    */
@@ -154,6 +208,10 @@ export type UserGuide = z.infer<typeof UserGuideSchema>;
 
 export const UserLabSchema = z.object({
   /**
+   * enable agent identity: give an agent its own mail address
+   */
+  enableAgentIdentity: z.boolean().optional(),
+  /**
    * enable graph runtime configuration for agents
    */
   enableAgentGraphConfig: z.boolean().optional(),
@@ -161,6 +219,10 @@ export const UserLabSchema = z.object({
    * enable artifact deployment features (publish artifacts to a hosted URL)
    */
   enableArtifactDeployment: z.boolean().optional(),
+  /**
+   * edit workspace pages together in a live collaboration room
+   */
+  enablePageCollab: z.boolean().optional(),
   /**
    * run Claude Code hetero sessions through the Claude Agent SDK instead of CLI spawn
    */
@@ -186,7 +248,9 @@ export const UserLabSchema = z.object({
    */
   enableImessage: z.boolean().optional(),
   /**
-   * enable markdown rendering in chat input editor
+   * @deprecated The chat input always uses the rich editor; paste conversion moved to
+   * `settings.general.enablePasteAutoConvert`. Kept so a write from an older released
+   * client is not stripped by the schema, and to seed that setting for users who had it off.
    */
   enableInputMarkdown: z.boolean().optional(),
   /**
@@ -194,8 +258,8 @@ export const UserLabSchema = z.object({
    */
   enableMessageTextSelectionActions: z.boolean().optional(),
   /**
-   * show the Integrations settings page (GitHub App and the coming-soon
-   * directory); hidden until the closed loop leaves alpha
+   * @deprecated Integrations left Labs and is always shown. Kept so a write
+   * from an older released client is not stripped by the schema.
    */
   enableIntegrations: z.boolean().optional(),
   /**
@@ -219,26 +283,19 @@ export const UserLabSchema = z.object({
   /** Capture a conversation turn as an eval test case (developer-facing). */
   enableEvalCapture: z.boolean().optional(),
   /**
-   * enable Goals: hand the agent a goal it plans into tasks, tracks and delivers
+   * show "Report a problem" in the topic menu, which sends where the topic is
+   * (its ids and the client environment) to the support team
    */
+  enableTopicBugReport: z.boolean().optional(),
+  /** @deprecated Legacy client preference. Goals are available to everyone. */
   enableGoals: z.boolean().optional(),
-  /**
-   * @deprecated Renamed to `enableGoals`. Written alongside it, and read first,
-   * while older clients that only know this key are still around: their writes
-   * touch only this key, so it carries the latest choice.
-   */
+  /** @deprecated Legacy alias for the Goals lab preference. */
   enableTopicAcceptance: z.boolean().optional(),
   /**
    * expose a port on the working device through a tunnel link, so a dev server
    * running there can be opened from this UI
    */
   enableDeviceTunnel: z.boolean().optional(),
-  /**
-   * opt this user's cloud-sandbox runs into a persistent workspace: the working
-   * directory survives session recycling and is shared across their topics,
-   * instead of being thrown away with the sandbox
-   */
-  enablePersistentSandbox: z.boolean().optional(),
 });
 
 export type UserLab = z.infer<typeof UserLabSchema>;
@@ -273,6 +330,21 @@ export const UserIntegrationPreferenceSchema = z.object({
   github: GithubIntegrationPreferenceSchema.optional(),
 });
 
+/**
+ * Per-user preferences across all of the user's workspaces — the user-level
+ * counterpart to {@link WorkspaceUserPreference}, which holds preferences inside
+ * one workspace. Workspaces are shared; how a user arranges them is not.
+ */
+export interface UserWorkspacePreference {
+  /**
+   * The user's own order of the workspace rail, as workspace ids. The personal
+   * space is pinned on top and never listed. Workspaces missing here (newly
+   * joined or created) follow in the server's order; ids of workspaces the user
+   * left are skipped on read and dropped on the next write.
+   */
+  order?: string[];
+}
+
 export interface UserPreference {
   /** Last-used app for "Open working directory in…" split button. Empty/unknown values fall back to platform default. */
   defaultOpenInApp?: string;
@@ -287,6 +359,18 @@ export interface UserPreference {
    */
   fontFamily?: string;
   guide?: UserGuide;
+  /**
+   * Personal-mode counterpart of {@link WorkspaceUserPreference.heteroPermissionModeDirs};
+   * written only through `user.setHeteroPermissionModeDir`, absent from the
+   * schema for the same reason as `worktreeModeDirs`.
+   */
+  heteroPermissionModeDirs?: HeteroPermissionModeDir[];
+  /**
+   * Personal-mode counterpart of {@link WorkspaceUserPreference.heteroPlanModeDirs};
+   * written only through `user.setHeteroPlanModeDir`, absent from the schema
+   * for the same reason as `worktreeModeDirs`.
+   */
+  heteroPlanModeDirs?: string[];
   hideSyncAlert?: boolean;
   /**
    * lab experimental features
@@ -297,6 +381,15 @@ export interface UserPreference {
    * opt-out.
    */
   integration?: UserIntegrationPreference;
+  /**
+   * Keys of the goal asks this user dismissed from the approval island, shared
+   * by every client of the account. Written only through
+   * `UserModel.addIslandDismissals`; deliberately absent from
+   * {@link UserPreferenceSchema}, because `updatePreference` sends the whole
+   * object and replaces arrays, so a stale client would overwrite keys
+   * another client added.
+   */
+  islandDismissals?: string[];
   lab?: UserLab;
   /**
    * Last active workspace id. Used on cloud to land the user back in the
@@ -304,6 +397,12 @@ export interface UserPreference {
    * context. Stored as id (not slug) so workspace renames don't invalidate it.
    */
   lastWorkspaceId?: string | null;
+  /**
+   * How a project's topic sidebar groups its topics. Kept apart from
+   * `topicGroupMode` because a project spans agents and devices: it defaults to
+   * grouping by agent, and its choice must not leak into single-agent lists.
+   */
+  projectTopicGroupMode?: TopicGroupMode;
   /**
    * Personal-mode counterpart of
    * {@link WorkspaceUserPreference.sidebarHiddenAgentIds}: agents/chat-groups
@@ -316,6 +415,13 @@ export interface UserPreference {
    * (Categories) hidden from the personal sidebar via Category Management.
    */
   sidebarHiddenGroupIds?: string[];
+  /**
+   * Personal-mode order of the pinned Agents / chat groups at the top of the
+   * sidebar, set by drag and drop. Written only through
+   * `home.updatePinnedOrder`; deliberately absent from
+   * {@link UserPreferenceSchema} for the same reason as `islandDismissals`.
+   */
+  sidebarPinnedOrder?: string[];
   /**
    * @deprecated Use settings.general.telemetry instead
    */
@@ -335,6 +441,15 @@ export interface UserPreference {
    * whether to use cmd + enter to send message
    */
   useCmdEnterToSend?: boolean;
+  /** This user's own view over the workspaces they belong to. */
+  workspace?: UserWorkspacePreference;
+  /**
+   * Personal-mode counterpart of {@link WorkspaceUserPreference.worktreeModeDirs}.
+   * Written only through `user.setWorktreeModeDir`; deliberately absent from
+   * {@link UserPreferenceSchema} for the same reason as `islandDismissals` —
+   * `updatePreference` deep-merges arrays by index, which would scramble it.
+   */
+  worktreeModeDirs?: string[];
 }
 
 export type ReferralStatusString =
@@ -375,6 +490,8 @@ export const OAuthAccountSchema = z.object({
  * SSO Provider info displayed in profile page
  */
 export interface SSOProvider {
+  /** Local Better Auth account row ID, used for account operations (not the provider subject). */
+  accountId?: string;
   email?: string;
   /** Expiration time - Date for better-auth */
   expiresAt?: Date | number | null;
@@ -391,13 +508,19 @@ export const UserPreferenceSchema = z
     integration: UserIntegrationPreferenceSchema.optional(),
     lab: UserLabSchema.optional(),
     lastWorkspaceId: z.string().nullish(),
+    projectTopicGroupMode: z
+      .enum(['byTime', 'byProject', 'flat', 'byStatus', 'byAgent', 'byDevice'])
+      .optional(),
     sidebarHiddenAgentIds: z.array(z.string()).optional(),
     sidebarHiddenGroupIds: z.array(z.string()).optional(),
     terminalFontFamily: z.string().optional(),
     telemetry: z.boolean().nullable(),
-    topicGroupMode: z.enum(['byTime', 'byProject', 'flat', 'byStatus']).optional(),
+    topicGroupMode: z
+      .enum(['byTime', 'byProject', 'flat', 'byStatus', 'byAgent', 'byDevice'])
+      .optional(),
     topicIncludeCompleted: z.boolean().optional(),
     topicSortBy: z.enum(['createdAt', 'updatedAt']).optional(),
     useCmdEnterToSend: z.boolean().optional(),
+    workspace: z.object({ order: z.array(z.string()).optional() }).optional(),
   })
   .partial();

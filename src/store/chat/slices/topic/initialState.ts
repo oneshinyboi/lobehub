@@ -1,6 +1,13 @@
 import { createReplicaState, type ReplicaPagedData, type ReplicaState } from '@/libs/replica';
 import { type ChatTopic, type TopicQuerySortBy } from '@/types/topic';
 
+import type { TopicShareEntry } from './projection';
+
+/** The project (and directory, when there is one) a blank conversation was opened in. */
+export type PendingNewTopicDirectory =
+  | { agentId: string; projectId?: undefined; projectWorkingDirectoryId: string }
+  | { agentId: string; projectId: string; projectWorkingDirectoryId?: undefined };
+
 /**
  * Unified topic data structure for each agent: the generic local-first paged
  * view plus topic query descriptors.
@@ -20,6 +27,8 @@ export interface TopicData extends ReplicaPagedData<ChatTopic, number> {
    * dropping the loading-more row while `hasMore` remains true.
    */
   loadMoreError?: unknown;
+  /** Only the caller's own topics (workspace "only mine" filter; part of the query identity). */
+  onlyMine?: boolean;
   /**
    * Last fetched/used page size for this topic container.
    * Used to detect "pageSize expansion" (user increases pageSize) without being affected by SWR revalidation
@@ -69,6 +78,28 @@ export interface ChatTopicState {
   creatingTopicIds: string[];
   inSearchingMode?: boolean;
   isSearchingTopic: boolean;
+  /**
+   * The active topic, when the user archived it while on it. The sidebar keeps
+   * the active topic visible even when archived (so a search hit or direct URL
+   * still shows the selection), but one just archived must disappear at once.
+   * Cleared whenever `activeTopicId` changes, so reopening it later pins it
+   * again. Maintained by `subscribeJustArchivedTopic`.
+   */
+  justArchivedTopicId?: string;
+  /**
+   * Project working directory the *next* topic creation should bind to.
+   *
+   * Set when a project group's "+" opens a blank conversation and cleared by
+   * any later switch to a real topic (or by the creation itself), so it can
+   * only ever describe that one pending new topic. `internal_createTopic` folds
+   * it into the create call, which is what keeps the deferred row inside the
+   * project instead of dropping it into a path-only conversation. The agent id
+   * is part of the value: switching agents must not let one agent's pending
+   * directory land on another agent's topic. A project without a directory the
+   * agent can run in stages the project alone: the topic is born
+   * conversation-only inside it.
+   */
+  pendingNewTopicDirectory?: PendingNewTopicDirectory;
   searchTopics: ChatTopic[];
   /**
    * Unified topic data map for each agent
@@ -97,6 +128,10 @@ export interface ChatTopicState {
   topicLoadingIds: string[];
   topicRenamingId?: string;
   topicSearchKeywords: string;
+  /** Share records behind the Share popover (`topicShareMap[topicId]`). */
+  topicShareMap: Record<string, TopicShareEntry>;
+  /** Local-first bookkeeping for `topicShareMap`. */
+  topicShareReplica: ReplicaState<TopicShareEntry>;
 }
 
 export const initialTopicState: ChatTopicState = {
@@ -112,6 +147,8 @@ export const initialTopicState: ChatTopicState = {
   topicDetailMap: {},
   topicDetailReplica: createReplicaState<ChatTopic>(),
   topicListReplica: createReplicaState<TopicData>(),
+  topicShareMap: {},
+  topicShareReplica: createReplicaState<TopicShareEntry>(),
   topicLoadingIdCounts: {},
   topicLoadingIds: [],
   topicEffortUpdatingIds: [],

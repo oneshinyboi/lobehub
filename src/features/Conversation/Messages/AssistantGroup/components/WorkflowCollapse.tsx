@@ -1,7 +1,5 @@
 import { type ChatToolPayloadWithResult } from '@lobechat/types';
-import { Block, Flexbox, Icon } from '@lobehub/ui';
-import { Accordion, ActionIcon, Spin, Text } from '@lobehub/ui/base-ui';
-import { cssVar } from 'antd-style';
+import { Accordion, ActionIcon, cssVar, Flexbox, Icon, Spin, Text } from '@lobehub/ui';
 import { Check, HandIcon, Maximize2, Minimize2, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import * as motion from 'motion/react-m';
@@ -12,10 +10,14 @@ import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { shinyTextStyles } from '@/styles';
+import { useDensity } from '@/styles/density';
 
+import StepStatusBox from '../../../components/StepStatusBox';
+import { STEP_TRIGGER_STYLES } from '../../../components/stepTriggerStyles';
 import { messageStateSelectors, useConversationStore } from '../../../store';
 import {
   TIME_MS_PER_SECOND,
+  WORKFLOW_ANIMATED_MAX_TOOLS,
   WORKFLOW_EXPANDED_SCROLL_THRESHOLD_PX,
   WORKFLOW_HEADLINE_DEBOUNCE_MS,
   WORKFLOW_PROSE_IDLE_COMMIT_MS,
@@ -40,6 +42,24 @@ const WORKFLOW_EXPAND_TOGGLE_TRANSITION = {
   duration: 0.18,
   ease: [0.4, 0, 0.2, 1],
 } as const;
+
+const COMPACT_WORKFLOW_STYLES = {
+  ...STEP_TRIGGER_STYLES.compact,
+  header: { background: 'transparent' },
+};
+// Animating the panel height re-lays out every mounted row on each frame; a
+// long list opens and closes in one step instead.
+const INSTANT_PANEL = { panel: { transitionDuration: '0s' } };
+const WORKFLOW_STYLES = {
+  compact: {
+    default: COMPACT_WORKFLOW_STYLES,
+    large: { ...COMPACT_WORKFLOW_STYLES, ...INSTANT_PANEL },
+  },
+  loose: {
+    default: STEP_TRIGGER_STYLES.loose,
+    large: { ...STEP_TRIGGER_STYLES.loose, ...INSTANT_PANEL },
+  },
+};
 
 export type WorkflowExpandLevel = 'collapsed' | 'semi' | 'full';
 
@@ -153,6 +173,7 @@ const WorkflowCollapse = memo<WorkflowCollapseProps>(
     workflowChromeComplete = false,
   }) => {
     const { t } = useTranslation('chat');
+    const { density } = useDensity();
     const toolCallsUnit = t('task.metrics.toolCallsShort');
     const allTools = useMemo(() => collectTools(blocks), [blocks]);
     const toolsPhaseComplete = areWorkflowToolsComplete(allTools);
@@ -393,20 +414,7 @@ const WorkflowCollapse = memo<WorkflowCollapseProps>(
     });
 
     const renderStatusBlock = (): React.ReactNode => {
-      const wrapInBlock = (inner: React.ReactNode) => (
-        <Block
-          horizontal
-          align="center"
-          flex="none"
-          height={24}
-          justify="center"
-          style={{ fontSize: 12 }}
-          variant="outlined"
-          width={24}
-        >
-          {inner}
-        </Block>
-      );
+      const wrapInBlock = (inner: React.ReactNode) => <StepStatusBox>{inner}</StepStatusBox>;
 
       if (streaming) {
         return wrapInBlock(
@@ -540,10 +548,13 @@ const WorkflowCollapse = memo<WorkflowCollapseProps>(
       </Flexbox>
     );
 
+    const accordionStyles =
+      WORKFLOW_STYLES[density][allTools.length > WORKFLOW_ANIMATED_MAX_TOOLS ? 'large' : 'default'];
+
     return (
       <Accordion
         indicatorPlacement="inline"
-        styles={{ trigger: { paddingBlock: 4, paddingInline: 4 } }}
+        styles={accordionStyles}
         value={expandedKeys}
         variant="borderless"
         items={[

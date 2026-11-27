@@ -1,14 +1,18 @@
 'use client';
 
 import { Flexbox } from '@lobehub/ui';
+import * as stylex from '@stylexjs/stylex';
 import { memo, useCallback } from 'react';
-import { useParams, useSearchParams } from 'react-router';
+import { useLocation, useParams, useSearchParams } from 'react-router';
 
 import AsyncError from '@/components/AsyncError';
 import { RouteLoading } from '@/components/Skeleton/RouteSegment';
 import { SkillDetailView, SkillNavKey } from '@/features/CommunitySkillDetail';
+import { catalogStyles } from '@/features/Marketplace/Catalog/styles';
+import MarketplaceSkillDetail from '@/features/Marketplace/Skills/SkillDetail';
 import { useQuery } from '@/hooks/useQuery';
 import { useDiscoverStore } from '@/store/discover';
+import { skillSelectors } from '@/store/discover/selectors';
 
 import NotFound from '../components/NotFound';
 
@@ -31,6 +35,7 @@ const SkillDetailPage = memo<SkillDetailPageProps>(({ mobile }) => {
 
   const { version } = useQuery() as { version?: string };
   const [searchParams, setSearchParams] = useSearchParams();
+  const { state } = useLocation();
   const activeTabParam = searchParams.get('activeTab');
   const activeTab = Object.values(SkillNavKey).includes(activeTabParam as SkillNavKey)
     ? (activeTabParam as SkillNavKey)
@@ -44,13 +49,14 @@ const SkillDetailPage = memo<SkillDetailPageProps>(({ mobile }) => {
       } else {
         next.set('activeTab', tab);
       }
-      setSearchParams(next, { replace: true });
+      setSearchParams(next, { replace: true, state });
     },
-    [searchParams, setSearchParams],
+    [searchParams, setSearchParams, state],
   );
 
   const useSkillDetail = useDiscoverStore((s) => s.useFetchSkillDetail);
-  const { data, error, isLoading, mutate } = useSkillDetail({ identifier, version });
+  const { error, isLoading, mutate, queryKey } = useSkillDetail({ identifier, version });
+  const data = useDiscoverStore(skillSelectors.skillDetail(queryKey));
   if (data === undefined) {
     if (isLoading) return <RouteLoading />;
     if (error) return <AsyncError error={error} variant={'page'} onRetry={() => void mutate()} />;
@@ -73,4 +79,24 @@ export const MobileSkillPage = (_props: { mobile?: boolean }) => {
   return <SkillDetailPage mobile={true} />;
 };
 
-export default SkillDetailPage;
+/**
+ * Desktop: the skill's page from the Marketplace's Skills design — install,
+ * ratings, the mock chat, which of my assistants have it on, and SKILL.md.
+ */
+const DesktopSkillPage = memo(() => {
+  const { slug = '' } = useParams<{ slug: string }>();
+  // The detail layout's header already carries the back arrow; the centered
+  // column matches the Agent and App pages.
+  return (
+    <div
+      data-testid="skill-detail-content"
+      {...stylex.props(catalogStyles.frame, catalogStyles.pageTop)}
+    >
+      <MarketplaceSkillDetail identifier={slug} key={slug} />
+    </div>
+  );
+});
+
+DesktopSkillPage.displayName = 'DesktopSkillPage';
+
+export default DesktopSkillPage;

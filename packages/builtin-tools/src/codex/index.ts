@@ -7,8 +7,12 @@ import { CodexRenderDisplayControls } from './displayControls';
 import ErrorInspector from './ErrorInspector';
 import FileChangeInspector from './FileChangeInspector';
 import FileChangeRender from './FileChangeRender';
+import { ImageOutputInspector } from './ImageOutputInspector';
+import { ImageOutputRender } from './ImageOutputRender';
 import McpToolInspector from './McpToolInspector';
 import McpToolRender from './McpToolRender';
+import ProposedPlanInspector from './ProposedPlanInspector';
+import ProposedPlanRender from './ProposedPlanRender';
 import TodoListInspector from './TodoListInspector';
 import TodoListRender from './TodoListRender';
 import WebSearchInspector from './WebSearchInspector';
@@ -19,7 +23,9 @@ export const CodexInspectors: Record<string, BuiltinInspector> = {
   command_execution: CommandExecutionInspector as BuiltinInspector,
   error: ErrorInspector as BuiltinInspector,
   file_change: FileChangeInspector as BuiltinInspector,
+  image_output: ImageOutputInspector as BuiltinInspector,
   mcp_tool_call: McpToolInspector as BuiltinInspector,
+  proposed_plan: ProposedPlanInspector as BuiltinInspector,
   todo_list: TodoListInspector as BuiltinInspector,
   web_search: WebSearchInspector as BuiltinInspector,
 };
@@ -27,7 +33,9 @@ export const CodexInspectors: Record<string, BuiltinInspector> = {
 export const CodexRenders: Record<string, BuiltinRender> = {
   collab_tool_call: CollabToolRender as BuiltinRender,
   file_change: FileChangeRender as BuiltinRender,
+  image_output: ImageOutputRender as BuiltinRender,
   mcp_tool_call: McpToolRender as BuiltinRender,
+  proposed_plan: ProposedPlanRender as BuiltinRender,
   todo_list: TodoListRender as BuiltinRender,
   web_search: WebSearchRender as BuiltinRender,
 };

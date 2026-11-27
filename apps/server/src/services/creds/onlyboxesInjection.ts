@@ -28,6 +28,13 @@ export interface OnlyboxesInjectionResult {
     env?: Record<string, string>;
     files?: Array<{ filename: string; key: string; path: string }>;
   };
+  /**
+   * Environment variable names each injected key set (names only, never
+   * values), attributed at write time — unlike the market path, which has to
+   * re-resolve per key. Keys that injected nothing (not found, unsupported,
+   * file creds without a path env var) are absent.
+   */
+  envVarsByKey: Record<string, string[]>;
   notFound: string[];
   success: boolean;
   unsupportedInSandbox: string[];
@@ -73,6 +80,7 @@ export const injectCredsIntoOnlyboxesSandbox = async ({
   const byKey = new Map((list.data ?? []).map((cred) => [cred.key, cred]));
 
   const env: Record<string, string> = {};
+  const envVarsByKey: Record<string, string[]> = {};
   const pathEnv: Record<string, string> = {};
   const files: Array<{
     contentBase64: string;
@@ -114,7 +122,9 @@ export const injectCredsIntoOnlyboxesSandbox = async ({
 
     if (cred.type === 'kv-env') {
       const full = await accessor.get(cred.id, { decrypt: true });
-      Object.assign(env, full.plaintext ?? {});
+      const plaintext = full.plaintext ?? {};
+      Object.assign(env, plaintext);
+      if (Object.keys(plaintext).length > 0) envVarsByKey[key] = Object.keys(plaintext);
       continue;
     }
 
@@ -135,7 +145,10 @@ export const injectCredsIntoOnlyboxesSandbox = async ({
         const envName = fileEnvNames.get(key);
         files.push({ contentBase64: bytes.toString('base64'), envName, path });
         resolvedFiles.push({ filename: fileName, key, path });
-        if (envName) pathEnv[envName] = path;
+        if (envName) {
+          pathEnv[envName] = path;
+          envVarsByKey[key] = [envName];
+        }
       } catch (error) {
         log('file credential %s could not be injected: %O', key, error);
         unsupportedInSandbox.push(key);
@@ -157,6 +170,7 @@ export const injectCredsIntoOnlyboxesSandbox = async ({
       env: { ...maskCredentialEnv(env), ...pathEnv },
       files: resolvedFiles,
     },
+    envVarsByKey,
     notFound,
     success: notFound.length === 0,
     unsupportedInSandbox,

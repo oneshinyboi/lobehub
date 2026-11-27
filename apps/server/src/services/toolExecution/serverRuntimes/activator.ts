@@ -1,16 +1,12 @@
-import { builtinSkills } from '@lobechat/builtin-skills';
 import { LobeActivatorIdentifier } from '@lobechat/builtin-tool-activator';
 import {
   ActivatorExecutionRuntime,
   type ActivatorRuntimeService,
   type ToolManifestInfo,
 } from '@lobechat/builtin-tool-activator/executionRuntime';
-import { SkillsExecutionRuntime } from '@lobechat/builtin-tool-skills/executionRuntime';
-import { describeLockedDevicePicker, getDisabledPluginIds } from '@lobechat/types';
+import { type SkillsExecutionRuntime } from '@lobechat/builtin-tool-skills/executionRuntime';
+import { describeLockedDevicePicker } from '@lobechat/types';
 
-import { AgentModel } from '@/database/models/agent';
-import { AgentSkillModel } from '@/database/models/agentSkill';
-import { filterBuiltinSkills } from '@/helpers/skillFilters';
 import {
   emitToolOutcomeSafely,
   resolveToolOutcomeScope,
@@ -18,7 +14,14 @@ import {
 import { redisPolicyStateStore } from '@/server/services/agentSignal/store/adapters/redis/policyStateStore';
 
 import { REMOTE_DEVICE_TOOL_IDENTIFIER } from './noActiveDevice';
+import { createSkillActivationRuntime } from './skillActivation';
 import { type ServerRuntimeRegistration } from './types';
+
+/**
+ * A skill miss lists every available skill in its content. The reported reason
+ * only needs the leading sentence that says what went wrong.
+ */
+const MAX_ERROR_REASON_LENGTH = 200;
 
 /**
  * Tools Activator Server Runtime
@@ -26,10 +29,21 @@ import { type ServerRuntimeRegistration } from './types';
  */
 export const activatorRuntime: ServerRuntimeRegistration = {
   factory: async (context) => {
-    const activatedIds: string[] = [];
+    // This factory runs for every tool call, so a list kept here only ever
+    // sees the current call. What the run already offers the model — the
+    // operation tool set plus earlier activations — arrives as
+    // `enabledToolIds`; seeding from it is what lets a repeated request
+    // answer "Already active".
+    const activatedIds: string[] = [...(context.enabledToolIds ?? [])];
     const emitActivationOutcome = async (input: {
       errorReason?: string;
       identifiers: string[];
+      /**
+       * What was activated. Only a skill belongs to the skill procedure
+       * domain; a tool is reported as a tool, with no domain, so it leaves no
+       * skill record, marker or receipt behind.
+       */
+      kind: 'skill' | 'tool';
       status: 'failed' | 'succeeded';
       summary: string;
     }) => {
@@ -42,10 +56,12 @@ export const activatorRuntime: ServerRuntimeRegistration = {
         userId: context.userId,
       });
 
+      const isSkill = input.kind === 'skill';
+
       await emitToolOutcomeSafely({
-        apiName: 'activateSkill',
+        apiName: isSkill ? 'activateSkill' : 'activateTools',
         context: { agentId: context.agentId, userId: context.userId },
-        domainKey: 'skill:builtin-skill',
+        domainKey: isSkill ? 'skill:builtin-skill' : undefined,
         errorReason: input.errorReason,
         identifier: LobeActivatorIdentifier,
         intentClass: 'tool_command',
@@ -54,7 +70,7 @@ export const activatorRuntime: ServerRuntimeRegistration = {
         policyStateStore: redisPolicyStateStore,
         relatedObjects: input.identifiers.map((id) => ({
           objectId: id,
-          objectType: 'skill',
+          objectType: input.kind,
           relation: 'selected',
         })),
         scope,
@@ -67,69 +83,57 @@ export const activatorRuntime: ServerRuntimeRegistration = {
       });
     };
 
-    // Create SkillsExecutionRuntime for activateSkill delegation
-    let skillsRuntime: SkillsExecutionRuntime | undefined;
-    if (context.serverDB && context.userId) {
-      const skillModel = new AgentSkillModel(context.serverDB, context.userId, context.workspaceId);
-
-      // `activateSkill` resolves independently of `operationSkillSet`/
-      // `<available_skills>` (built once, earlier, in aiAgent/index.ts) — it
-      // queries builtins/DB directly by name. Without this guard, a skill
-      // the agent has explicitly disabled would no longer be *listed*, but a
-      // model that already knows its name (prior turn, or a guess) could
-      // still activate and use it. Re-derive the disabled set here so this
-      // independent resolution path enforces the same tri-state.
-      let disabledSkillIds = new Set<string>();
-      if (context.agentId) {
-        const agentModel = new AgentModel(context.serverDB, context.userId, context.workspaceId);
-        const agentConfig = await agentModel.getAgentConfigById(context.agentId);
-        disabledSkillIds = new Set(getDisabledPluginIds(agentConfig?.plugins ?? undefined));
-      }
-
-      skillsRuntime = new SkillsExecutionRuntime({
-        // Same device gate as the skills runtime: device-only skills are
-        // activatable in device-capable runs (matching <available_skills>),
-        // with `activeDeviceId` as the fallback for callers without a plan.
-        builtinSkills: filterBuiltinSkills(builtinSkills, {
-          canExecuteOnDevice: context.deviceCapable ?? !!context.activeDeviceId,
-        }).filter((skill) => !disabledSkillIds.has(skill.identifier)),
-        service: {
-          findAll: () => skillModel.findAll(),
-          findById: async (id) => {
-            const skill = await skillModel.findById(id);
-            return skill && disabledSkillIds.has(skill.identifier) ? undefined : skill;
-          },
-          findByName: async (name) => {
-            const skill = await skillModel.findByName(name);
-            return skill && disabledSkillIds.has(skill.identifier) ? undefined : skill;
-          },
-          readResource: async () => {
-            throw new Error('readResource not available in tools runtime');
-          },
-        },
-      });
-    }
+    // Share the full skill-activation runtime with `lobe-skills` so the
+    // `activateTools` skill fallback resolves agent-document, filesystem
+    // (project/device), and user-library skills under the exact same gates.
+    //
+    // Opened on the first skill activation, not here: this factory runs for
+    // every tool call, and most `activateTools` calls name only tools. Opening
+    // it reads the agent's config, its workspace and every skill document it
+    // owns, none of which a tool activation uses.
+    const { serverDB, userId } = context;
+    let skillsRuntime: Promise<SkillsExecutionRuntime> | undefined;
+    const getSkillsRuntime =
+      serverDB && userId
+        ? () => (skillsRuntime ??= createSkillActivationRuntime({ ...context, serverDB, userId }))
+        : undefined;
 
     const service: ActivatorRuntimeService = {
-      activateSkill: skillsRuntime
-        ? async (args) => {
-            try {
-              const result = await skillsRuntime!.activateSkill(args);
-              await emitActivationOutcome({
+      activateSkill: getSkillsRuntime
+        ? async (args, options) => {
+            const reportFailure = (errorReason: string) =>
+              emitActivationOutcome({
+                errorReason,
                 identifiers: [args.name],
-                status: 'succeeded',
-                summary: 'Activator selected a skill.',
-              });
-              return result;
-            } catch (error) {
-              await emitActivationOutcome({
-                errorReason: (error as Error).message,
-                identifiers: [args.name],
+                kind: 'skill',
                 status: 'failed',
                 summary: 'Activator failed to select a skill.',
               });
+
+            let result: Awaited<ReturnType<SkillsExecutionRuntime['activateSkill']>>;
+            try {
+              result = await (await getSkillsRuntime()).activateSkill(args);
+            } catch (error) {
+              await reportFailure((error as Error).message);
               throw error;
             }
+
+            // The skills runtime answers a skill it cannot open with
+            // `success: false` instead of throwing, so the result decides what
+            // is reported. A miss while probing an `activateTools` identifier
+            // is not a skill event: the identifier simply names nothing.
+            if (result.success) {
+              await emitActivationOutcome({
+                identifiers: [args.name],
+                kind: 'skill',
+                status: 'succeeded',
+                summary: 'Activator selected a skill.',
+              });
+            } else if (!options?.probe) {
+              await reportFailure(result.content.slice(0, MAX_ERROR_REASON_LENGTH));
+            }
+
+            return result;
           }
         : undefined,
       // A device-locked run walls the picker off, so activating it can only fail;
@@ -153,14 +157,31 @@ export const activatorRuntime: ServerRuntimeRegistration = {
               description: a.description,
               name: a.name,
             })),
+            // Passed through for wire-name matching: non-builtin types
+            // (`mcp`, `standalone`) append a `____<type>` segment to the
+            // offered wire name, so resolving a copied name needs it.
             identifier: manifest.identifier,
             name: manifest.meta?.title ?? manifest.identifier,
             systemRole: manifest.systemRole,
+            type: manifest.type,
           });
         }
 
         return results;
       },
+      // Full discoverable list, for inverting `MD5HASH_…` wire-name segments
+      // and resolving bare API names: neither can be probed against the
+      // identifier-keyed map, so the runtime hashes every discoverable
+      // identifier locally and matches the generated wire-name variants. Same
+      // scoping as `getToolManifests` — the map only holds discoverable tools.
+      listToolManifests: async (): Promise<ToolManifestInfo[]> =>
+        Object.values(context.toolManifestMap ?? {}).map((manifest) => ({
+          apiDescriptions: manifest.api.map((a) => ({ description: a.description, name: a.name })),
+          identifier: manifest.identifier,
+          name: manifest.meta?.title ?? manifest.identifier,
+          systemRole: manifest.systemRole,
+          type: manifest.type,
+        })),
       markActivated: (identifiers: string[]) => {
         for (const id of identifiers) {
           if (!activatedIds.includes(id)) {
@@ -169,8 +190,9 @@ export const activatorRuntime: ServerRuntimeRegistration = {
         }
         void emitActivationOutcome({
           identifiers,
+          kind: 'tool',
           status: 'succeeded',
-          summary: 'Activator marked skills as active.',
+          summary: 'Activator activated tools.',
         }).catch((error) => {
           console.error('[AgentSignal] Failed to emit activator outcome:', error);
         });

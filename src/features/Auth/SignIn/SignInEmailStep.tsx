@@ -1,13 +1,22 @@
 import { BRANDING_NAME } from '@lobechat/business-const';
-import { Flexbox, Icon } from '@lobehub/ui';
-import { Alert, Badge, Button, Divider, Input, Text } from '@lobehub/ui/base-ui';
-import { Form, type FormInstance } from '@lobehub/ui/base-ui/form';
-import { createStaticStyles } from 'antd-style';
+import {
+  Alert,
+  Badge,
+  Button,
+  createStaticStyles,
+  Divider,
+  Flexbox,
+  Icon,
+  Input,
+  Text,
+} from '@lobehub/ui';
+import { Form, type FormInstance } from '@lobehub/ui/form';
 import { Mail } from 'lucide-react';
 import { type CSSProperties, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import AuthIcons from '@/components/AuthIcons';
+import InlineErrorText from '@/components/InlineErrorText';
 import AuthCard from '@/features/AuthCard';
 import AuthAgreement from '@/features/AuthShell/AuthAgreement';
 
@@ -48,9 +57,13 @@ export interface SignInEmailStepProps {
   onResetEmail: () => void;
   onSetPassword: () => void;
   onSocialSignIn: (provider: string) => void;
+  /** Why sending the "set a password" email failed, shown under the social-only hint */
+  sendError?: string;
   serverConfigInit: boolean;
   sessionExpired?: boolean;
   setAgreementChecked: (checked: boolean) => void;
+  /** Provider whose sign-in just failed; explained under the provider buttons */
+  socialErrorProvider?: string | null;
   socialLoading: string | null;
 }
 
@@ -63,9 +76,11 @@ export const SignInEmailStep = ({
   lastAuthProvider,
   loading,
   oAuthSSOProviders,
+  sendError,
   serverConfigInit,
   sessionExpired,
   setAgreementChecked,
+  socialErrorProvider,
   socialLoading,
   onGoToSignup,
   onResetEmail,
@@ -115,6 +130,7 @@ export const SignInEmailStep = ({
             const button = (
               <Button
                 block
+                htmlType="button"
                 icon={<Icon icon={AuthIcons(provider, 18)} />}
                 key={provider}
                 loading={socialLoading === provider}
@@ -136,7 +152,7 @@ export const SignInEmailStep = ({
                 (oAuthSSOProviders.length === 1 && !disableEmailPassword));
             return showLastUsed ? (
               <Badge
-                color="var(--ant-color-info)"
+                color="var(--lobe-color-info)"
                 count={t('betterAuth.signin.lastUsed')}
                 key={provider}
                 style={{ display: 'block', width: '100%' }}
@@ -147,6 +163,13 @@ export const SignInEmailStep = ({
               button
             );
           })}
+          {socialErrorProvider && (
+            <InlineErrorText>
+              {t('betterAuth.signin.socialFailed', {
+                provider: getProviderName(socialErrorProvider),
+              })}
+            </InlineErrorText>
+          )}
           {showEmailForm && divider}
         </Flexbox>
       )}
@@ -158,6 +181,7 @@ export const SignInEmailStep = ({
           <Form.Field
             name="email"
             style={{ gap: 0, paddingBlock: '0 24px' }}
+            validateOn="submit"
             validate={(value: string) => {
               if (!value) return t('betterAuth.errors.emailRequired');
               const trimmedValue = value.trim();
@@ -206,6 +230,9 @@ export const SignInEmailStep = ({
             </>
           }
         />
+      )}
+      {isSocialOnly && sendError && (
+        <InlineErrorText style={{ marginTop: 12 }}>{sendError}</InlineErrorText>
       )}
       {isSocialOnly && (
         <Text align={'center'} fontSize={13} style={{ marginTop: 12 }} type={'secondary'}>

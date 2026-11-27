@@ -1,12 +1,24 @@
 'use client';
 
-import { Avatar as LobeAvatar, type AvatarProps as LobeAvatarProps } from '@lobehub/ui/base-ui';
-import { memo } from 'react';
+import {
+  AgentAvatar as GeneratedAgentAvatar,
+  Avatar as LobeAvatar,
+  type AvatarProps as LobeAvatarProps,
+  parseAgentAvatar,
+} from '@lobehub/ui';
+import { memo, type ReactNode } from 'react';
+
+import { pickDomProps } from '@/components/AgentAvatar/resolve';
 
 import { remoteAvatarSrc, resolveAvatar } from './fallback';
 import { useBrokenSrc } from './useBrokenSrc';
 
 export interface AvatarProps extends LobeAvatarProps {
+  /**
+   * Rendered in place of the whole avatar when the image fails to load,
+   * instead of the name's initials.
+   */
+  brokenFallback?: ReactNode;
   /**
    * Seed for the fallback initials. Defaults to `title`; pass it when the
    * visible name differs from the tooltip title.
@@ -28,9 +40,25 @@ export interface AvatarProps extends LobeAvatarProps {
  * two disagree, and on disagreement the library's own "UN" fallback wins.
  */
 const Avatar = memo<AvatarProps>(
-  ({ alt, avatar, background, name, size = 48, title, unoptimized, ...rest }) => {
+  ({ alt, avatar, background, brokenFallback, name, size = 48, title, unoptimized, ...rest }) => {
     const src = remoteAvatarSrc(avatar);
     const [isBroken, markBroken] = useBrokenSrc(src);
+
+    // A character picked for an Agent (`agent-avatar:<shape>:<color>`) is no emoji or image:
+    // the library's Avatar would print the raw value, so draw the character itself.
+    const picked = typeof avatar === 'string' ? parseAgentAvatar(avatar) : undefined;
+    if (picked)
+      return (
+        <span
+          {...pickDomProps(rest)}
+          className={rest.className}
+          style={{ display: 'inline-flex', flex: 'none', ...rest.style }}
+        >
+          <GeneratedAgentAvatar {...picked} name={name || title} size={size} />
+        </span>
+      );
+
+    if (isBroken && brokenFallback) return brokenFallback;
 
     const imgAlt = alt || name || title || 'avatar';
     const resolved = resolveAvatar({
@@ -42,6 +70,9 @@ const Avatar = memo<AvatarProps>(
             height={size}
             loading={'lazy'}
             src={src}
+            // Mirrors @lobehub/ui's own avatar <img>: crop a non-square image
+            // to the square instead of stretching it.
+            style={{ objectFit: 'cover' }}
             width={size}
             onError={markBroken}
           />

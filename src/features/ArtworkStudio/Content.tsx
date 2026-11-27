@@ -3,7 +3,6 @@
 import { imageUrl } from '@lobechat/const';
 import type { AgentArtworkComposition, AgentArtworkStyle } from '@lobechat/prompts';
 import { AGENT_ARTWORK_STYLES } from '@lobechat/prompts';
-import { Center, Flexbox, Icon } from '@lobehub/ui';
 import {
   AccordionHeader,
   AccordionItem,
@@ -12,14 +11,17 @@ import {
   AccordionTrigger,
   ActionIcon,
   Alert,
-  Avatar,
   Button,
+  Center,
+  createStaticStyles,
+  cssVar,
+  Flexbox,
+  Icon,
   Input,
   Spin,
   Text,
   useModalContext,
-} from '@lobehub/ui/base-ui';
-import { createStaticStyles, cssVar } from 'antd-style';
+} from '@lobehub/ui';
 import {
   CircleUserRound,
   Frame,
@@ -33,6 +35,7 @@ import {
 import { memo, type MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import Avatar from '@/components/Avatar';
 import { avatarRemountKey, openFilePicker } from '@/features/AgentProfileArtwork/utils';
 import { CHIEF_AGENT_ARTWORKS, DEFAULT_CHIEF_AGENT_ARTWORK } from '@/features/ChiefAgent/artwork';
 import { HOME_PORTRAIT_VISIBLE_RATIO } from '@/features/Home/portraitFraming';

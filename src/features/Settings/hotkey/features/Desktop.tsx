@@ -1,12 +1,12 @@
 'use client';
 
-import { HotkeyInput } from '@lobehub/ui';
-import { Skeleton, Spin, toast } from '@lobehub/ui/base-ui';
-import { Form, type FormGroupItem, useForm } from '@lobehub/ui/base-ui/form';
+import { HotkeyInput, Spin, toast } from '@lobehub/ui';
+import { Form, type FormGroupItem, useForm } from '@lobehub/ui/form';
 import isEqual from 'fast-deep-equal';
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { DesktopHotkeysSkeleton } from '@/components/Skeleton/Settings/tabs/Hotkey';
 import { DESKTOP_HOTKEYS_REGISTRATION } from '@/const/desktopGlobalShortcuts';
 import { FORM_STYLE } from '@/const/layoutTokens';
 import { SettingsSearchAnchor } from '@/features/SettingsSearch/anchor';
@@ -14,9 +14,23 @@ import { useElectronStore } from '@/store/electron';
 import { desktopHotkeysSelectors } from '@/store/electron/selectors';
 import { type DesktopHotkeyConfig, type DesktopHotkeyItem } from '@/types/hotkey';
 
+import { acceleratorToHotkey } from './appMenuHotkeys';
+
 const HotkeySetting = memo(() => {
   const { t } = useTranslation(['setting', 'hotkey']);
-  const hotkeys = useElectronStore(desktopHotkeysSelectors.hotkeys, isEqual);
+  const storedHotkeys = useElectronStore(desktopHotkeysSelectors.hotkeys, isEqual);
+  // Main process stores Electron accelerators (`CommandOrControl+,`); HotkeyInput reads `mod+comma`.
+  // Normalize the form values themselves: Form binds fields by name and overrides a field's `value`.
+  const hotkeys = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(storedHotkeys).map(([id, accelerator]) => [
+          id,
+          acceleratorToHotkey(accelerator),
+        ]),
+      ) as DesktopHotkeyConfig,
+    [storedHotkeys],
+  );
   const form = useForm({ initialValues: hotkeys, values: hotkeys });
 
   const [isHotkeysInit, updateDesktopHotkey, useFetchDesktopHotkeys] = useElectronStore((s) => [
@@ -29,20 +43,30 @@ const HotkeySetting = memo(() => {
 
   const [loading, setLoading] = useState(false);
 
-  if (!isHotkeysInit) return <Skeleton.Text rows={5} />;
+  if (!isHotkeysInit) return <DesktopHotkeysSkeleton />;
 
   const updateHotkey = async (id: DesktopHotkeyItem['id'], value: string) => {
     setLoading(true);
+    // Hotkeys save as soon as they are recorded, so the failure belongs on the hotkey input the
+    // user just changed (conflict, bad format) rather than a corner toast away from it.
     try {
       const result = await updateDesktopHotkey(id, value);
       if (result.success) {
+        form.setErrors({ [id]: undefined });
         toast.success(t('hotkey.updateSuccess', { ns: 'setting' }));
       } else {
-        // Show the appropriate error message based on error type
-        toast.error(t(`hotkey.errors.${result.errorType}` as any, { ns: 'setting' }));
+        form.setErrors({
+          [id]: t(
+            result.errorType && result.errorType !== 'UNKNOWN'
+              ? (`hotkey.errors.${result.errorType}` as any)
+              : 'hotkey.updateErrorRetry',
+            { ns: 'setting' },
+          ),
+        });
       }
-    } catch {
-      toast.error(t('hotkey.updateError', { ns: 'setting' }));
+    } catch (error) {
+      console.error('[Hotkey] Failed to update desktop hotkey:', error);
+      form.setErrors({ [id]: t('hotkey.updateErrorRetry', { ns: 'setting' }) });
     } finally {
       setLoading(false);
     }

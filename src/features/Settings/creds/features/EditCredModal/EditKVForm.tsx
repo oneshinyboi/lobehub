@@ -1,38 +1,29 @@
 'use client';
 
 import { type UserCredSummary } from '@lobechat/types';
-import { Flexbox } from '@lobehub/ui';
-import { Button, Input, InputPassword, Spin, TextArea } from '@lobehub/ui/base-ui';
-import { Form, useForm } from '@lobehub/ui/base-ui/form';
+import { Button, Flexbox, Input, Spin, TextArea } from '@lobehub/ui';
+import { Form, useForm } from '@lobehub/ui/form';
 import { useMutation } from '@tanstack/react-query';
-import { createStaticStyles } from 'antd-style';
-import { Minus, Plus } from 'lucide-react';
 import { type FC, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { usePermission } from '@/hooks/usePermission';
 
+import CredFormFooter from '../CredFormFooter';
+import KVPairsField from '../KVPairsField';
 import { type CredsApi } from '../useCredsApi';
-
-const styles = createStaticStyles(({ css }) => ({
-  footer: css`
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    margin-block-start: 24px;
-  `,
-  kvPair: css`
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-  `,
-}));
+import { buildKVUpdateInput } from './kvUpdateInput';
 
 interface EditKVFormProps {
   cred: UserCredSummary;
   credsApi: CredsApi;
   onCancel: () => void;
   onSuccess: () => void;
+  /**
+   * The stored values cannot be read back: the form starts empty, leaving it
+   * empty keeps them, and filling it in replaces them all.
+   */
+  writeOnly?: boolean;
 }
 
 interface FormValues {
@@ -41,7 +32,7 @@ interface FormValues {
   name: string;
 }
 
-const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }) => {
+const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess, writeOnly }) => {
   const { t } = useTranslation('setting');
   const { allowed: canManageCredentials } = usePermission('manage_provider_key');
   const form = useForm<FormValues>({ onSubmit: (values) => handleSubmit(values) });
@@ -50,6 +41,16 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }
   // Fetch decrypted values on mount
   useEffect(() => {
     const fetchDecryptedValues = async () => {
+      if (writeOnly) {
+        form.setValues({
+          description: cred.description,
+          kvPairs: [{ key: '', value: '' }],
+          name: cred.name,
+        });
+        setIsLoading(false);
+        return;
+      }
+
       if (!canManageCredentials) {
         setIsLoading(false);
         return;
@@ -86,29 +87,13 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }
     };
 
     fetchDecryptedValues();
-  }, [canManageCredentials, cred.id, cred.name, cred.description, credsApi, form]);
+  }, [canManageCredentials, cred.id, cred.name, cred.description, credsApi, form, writeOnly]);
 
   const updateMutation = useMutation({
     mutationFn: async (values: FormValues) => {
       if (!canManageCredentials) return;
 
-      const kvPairs = values.kvPairs || [];
-      const valuesObj = kvPairs.reduce(
-        (acc, pair) => {
-          if (pair.key && pair.value) {
-            acc[pair.key] = pair.value;
-          }
-          return acc;
-        },
-        {} as Record<string, string>,
-      );
-
-      await credsApi.client.update.mutate({
-        description: values.description,
-        id: cred.id,
-        name: values.name,
-        values: valuesObj,
-      });
+      await credsApi.client.update.mutate(buildKVUpdateInput(cred.id, values, writeOnly));
     },
     onSuccess: () => {
       onSuccess();
@@ -135,53 +120,11 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }
         <Input disabled={!canManageCredentials} />
       </Form.Field>
 
-      <Form.Field label={t('creds.form.values')}>
-        <Form.List name="kvPairs">
-          {({ fields, add, remove }) => (
-            <Flexbox gap={8}>
-              {fields.map(({ key, index }) => (
-                <div className={styles.kvPair} key={key}>
-                  <div style={{ flex: 1 }}>
-                    <Form.Field bare name={`kvPairs.${index}.key`}>
-                      <Input
-                        disabled={!canManageCredentials}
-                        placeholder={cred.type === 'kv-env' ? 'ENV_VAR_NAME' : 'Header-Name'}
-                      />
-                    </Form.Field>
-                  </div>
-                  <div style={{ flex: 2 }}>
-                    <Form.Field bare name={`kvPairs.${index}.value`}>
-                      <InputPassword
-                        autoComplete="new-password"
-                        disabled={!canManageCredentials}
-                        placeholder={t('creds.form.valuePlaceholder')}
-                      />
-                    </Form.Field>
-                  </div>
-                  {fields.length > 1 && (
-                    <Button
-                      disabled={!canManageCredentials}
-                      icon={Minus}
-                      size="small"
-                      type="text"
-                      onClick={() => remove(index)}
-                    />
-                  )}
-                </div>
-              ))}
-              <Button
-                block
-                disabled={!canManageCredentials}
-                icon={Plus}
-                type="dashed"
-                onClick={() => add({ key: '', value: '' })}
-              >
-                {t('creds.form.addPair')}
-              </Button>
-            </Flexbox>
-          )}
-        </Form.List>
-      </Form.Field>
+      <KVPairsField
+        disabled={!canManageCredentials}
+        hint={writeOnly ? t('creds.writeOnly.editHint') : undefined}
+        type={cred.type as 'kv-env' | 'kv-header'}
+      />
 
       <Form.Field label={t('creds.form.description')} name="description">
         <TextArea
@@ -191,8 +134,10 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }
         />
       </Form.Field>
 
-      <div className={styles.footer}>
-        <Button onClick={onCancel}>{t('creds.form.cancel')}</Button>
+      <CredFormFooter>
+        <Button type="fill" onClick={onCancel}>
+          {t('creds.form.cancel')}
+        </Button>
         <Button
           disabled={!canManageCredentials}
           htmlType="submit"
@@ -201,7 +146,7 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, credsApi, onCancel, onSuccess }
         >
           {t('creds.form.save')}
         </Button>
-      </div>
+      </CredFormFooter>
     </Form>
   );
 };

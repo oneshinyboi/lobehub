@@ -1,8 +1,9 @@
 import { AGENT_CHAT_URL } from '@lobechat/const';
-import { agentDisplayName, type AgentNameFields } from '@lobechat/types';
+import { agentDisplayName, agentRenameField } from '@lobechat/types';
 
 import { openRenameModal } from '@/components/RenameModal';
 import { type PortalMoreMenuConfig } from '@/features/Portal/components/PortalMoreMenu/types';
+import { usePrivateAgentLinkNotice } from '@/features/PrivateAgentLinkNotice';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
@@ -10,14 +11,6 @@ import { useChatStore } from '@/store/chat';
 import { chatPortalSelectors } from '@/store/chat/selectors';
 
 import { usePortalShareUrl } from '../components/PortalMoreMenu/shareUrl';
-
-/**
- * The field a rename writes: whichever one the header is showing. `name` wins
- * the label whenever it is set, so renaming `title` under a named agent would
- * save without visibly changing anything.
- */
-export const agentRenameField = (meta: AgentNameFields): 'name' | 'title' =>
-  meta.name?.trim() ? 'name' : 'title';
 
 export const useAgentDetailMoreMenu = (): PortalMoreMenuConfig | undefined => {
   const agentId = useChatStore(chatPortalSelectors.agentDetailId);
@@ -28,12 +21,15 @@ export const useAgentDetailMoreMenu = (): PortalMoreMenuConfig | undefined => {
   ]);
   const { allowed: canEdit } = usePermission('edit_own_content');
   const shareUrl = usePortalShareUrl(agentId ? AGENT_CHAT_URL(agentId) : undefined);
+  const notifyPrivateAgentLink = usePrivateAgentLinkNotice();
 
   if (!agentId) return;
 
   return {
     copyId: agentId,
     copyLink: shareUrl,
+    // A private agent's link opens for nobody else in the workspace.
+    onLinkCopied: () => notifyPrivateAgentLink(agentId),
     refresh: () => refreshAgentConfig(agentId),
     rename: canEdit
       ? () =>

@@ -1,7 +1,3 @@
-import {
-  type UserPersonaDocument,
-  type UserPersonaDocumentHistoriesItem,
-} from '@lobechat/database/schemas';
 import { userMemories } from '@lobechat/database/schemas';
 import { type UserPersonaExtractionResult } from '@lobechat/memory-user-memory';
 import {
@@ -9,7 +5,11 @@ import {
   RetrievalUserMemoryIdentitiesProvider,
   UserPersonaExtractor,
 } from '@lobechat/memory-user-memory';
-import type { UserServiceModelConfig } from '@lobechat/types';
+import type {
+  UserPersonaDocument,
+  UserPersonaDocumentHistory,
+  UserServiceModelConfig,
+} from '@lobechat/types';
 import { and, desc, eq } from 'drizzle-orm';
 
 import { getBusinessModelRuntimeHooks } from '@/business/server/model-runtime';
@@ -18,6 +18,7 @@ import { UserMemoryModel } from '@/database/models/userMemory';
 import { UserPersonaModel } from '@/database/models/userMemory/persona';
 import { AiInfraRepos } from '@/database/repositories/aiInfra';
 import { type LobeChatDatabase } from '@/database/type';
+import { visibleMemoryState } from '@/database/utils/memoryVisibility';
 import { notTrashed } from '@/database/utils/softDelete';
 import { type MemoryAgentConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
 import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
@@ -47,7 +48,7 @@ interface UserPersonaAgentPayload {
 
 interface UserPersonaAgentResult {
   agentResult: UserPersonaExtractionResult;
-  diff?: UserPersonaDocumentHistoriesItem;
+  diff?: UserPersonaDocumentHistory;
   document: UserPersonaDocument;
 }
 
@@ -63,13 +64,21 @@ export class UserPersonaService {
   private readonly preferredLanguage?: string;
   private readonly db: LobeChatDatabase;
   private readonly agentConfig: MemoryAgentConfig;
+  private readonly preferredModels?: string[];
+  private readonly preferredProviders?: string[];
 
   constructor(db: LobeChatDatabase) {
-    const { agentPersonaWriter } = parseMemoryExtractionConfig();
+    const {
+      agentPersonaWriter,
+      agentPersonaWriterPreferredModels,
+      agentPersonaWriterPreferredProviders,
+    } = parseMemoryExtractionConfig();
 
     this.db = db;
     this.preferredLanguage = agentPersonaWriter.language;
     this.agentConfig = agentPersonaWriter;
+    this.preferredModels = agentPersonaWriterPreferredModels;
+    this.preferredProviders = agentPersonaWriterPreferredProviders;
   }
 
   private async resolveAgentConfig(userId: string): Promise<MemoryAgentConfig> {
@@ -111,11 +120,22 @@ export class UserPersonaService {
       fallbackProvider: agentConfig.provider,
       label: 'persona writer',
       modelId: agentConfig.model,
+      preferredModels: this.preferredModels,
+      preferredProviders: this.preferredProviders,
     });
 
-    const keyVaults: ProviderKeyVaultMap = Object.entries(runtimeState.runtimeConfig || {}).reduce(
+    const normalizedRuntimeConfig = Object.fromEntries(
+      Object.entries(runtimeState.runtimeConfig || {}).map(([provider, config]) => [
+        provider.toLowerCase(),
+        config,
+      ]),
+    );
+
+    const keyVaults: ProviderKeyVaultMap = Object.entries(normalizedRuntimeConfig).reduce(
       (acc, [provider, config]) => {
-        acc[provider.toLowerCase()] = config?.keyVaults;
+        if (provider !== providerId) return acc;
+
+        acc[provider] = config?.keyVaults;
         return acc;
       },
       {} as ProviderKeyVaultMap,
@@ -198,7 +218,11 @@ export const buildUserPersonaJobInput = async (db: LobeChatDatabase, userId: str
     db.query.userMemories.findMany({
       limit: 20,
       orderBy: [desc(userMemories.capturedAt)],
-      where: and(eq(userMemories.userId, userId), notTrashed(userMemories.isDeleted)),
+      where: and(
+        eq(userMemories.userId, userId),
+        notTrashed(userMemories.isDeleted),
+        visibleMemoryState(userMemories.state),
+      ),
     }),
   ]);
 

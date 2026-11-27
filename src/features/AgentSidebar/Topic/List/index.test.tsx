@@ -24,6 +24,10 @@ const chatStoreStateMock = vi.hoisted(() => ({
   topics: [],
 }));
 const skeletonRenderCount = vi.hoisted(() => ({ value: 0 }));
+const userStoreStateMock = vi.hoisted(() => ({
+  topicIncludeCompleted: false,
+  topicSortBy: 'updatedAt',
+}));
 
 vi.mock('./TopicListSkeleton', () => ({
   default: () => {
@@ -87,6 +91,7 @@ vi.mock('@/store/chat', () => ({
 }));
 
 vi.mock('@/store/chat/selectors', () => ({
+  operationSelectors: { visiblyRunningTopicIds: () => [] },
   topicSelectors: {
     currentTopicLength: (state: { topicLength: number }) => state.topicLength,
     displayTopicsForSidebar: () => (state: typeof chatStoreStateMock) => state.topics,
@@ -108,18 +113,22 @@ vi.mock('@/store/global/selectors', () => ({
 }));
 
 vi.mock('@/store/user', () => ({
-  useUserStore: (
-    selector: (state: { topicIncludeCompleted: boolean; topicSortBy: string }) => unknown,
-  ) => selector({ topicIncludeCompleted: false, topicSortBy: 'updatedAt' }),
+  getUserStoreState: () => userStoreStateMock,
+  useUserStore: (selector: (state: typeof userStoreStateMock) => unknown) =>
+    selector(userStoreStateMock),
 }));
 
 vi.mock('@/store/user/selectors', () => ({
+  authSelectors: { isLoaded: () => true },
   preferenceSelectors: {
     topicIncludeCompleted: (state: { topicIncludeCompleted: boolean }) =>
       state.topicIncludeCompleted,
     topicSortBy: (state: { topicSortBy: string }) => state.topicSortBy,
   },
+  userProfileSelectors: { userId: () => 'test-user-id' },
 }));
+
+vi.mock('@/hooks/useTopicOnlyMine', () => ({ useTopicOnlyMine: () => false }));
 
 vi.mock('../AllTopicsDrawer', () => ({
   default: ({ open }: { open: boolean }) => (

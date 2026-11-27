@@ -10,6 +10,7 @@ import {
   type MessageMetadata,
   type MessagePluginItem,
   type ModelRankItem,
+  type TopicMessageSearchMatch,
   type UIChatMessage,
   type UpdateMessageParams,
   type UpdateMessageRAGParams,
@@ -19,10 +20,12 @@ import { type HeatmapsProps } from '@lobehub/charts';
 import pMap from 'p-map';
 
 import { lambdaClient } from '@/libs/trpc/client';
+import { workTypeOptIn } from '@/services/workTypeOptIn';
 
 import { abortableRequest } from '../utils/abortableRequest';
 import type { MessageListPage, MessageRoundCursor } from './cache';
 import { supportsRoundCursor } from './cache';
+import { readMessagesByRoundCursor, takePrimedMessageListPage } from './roundCursorPage';
 
 /**
  * Query context for message operations
@@ -57,12 +60,6 @@ export interface MessageReadQueryContext {
   topicId?: string | null;
   topicShareId?: string;
 }
-
-/**
- * Rows walked per round-cursor page: whole rounds up to this many mainline rows,
- * matching the newest-first window `getMessages` serves.
- */
-const MESSAGE_PAGE_ROW_BUDGET = 1000;
 
 export type MessageBatchOperation =
   | {
@@ -190,7 +187,7 @@ export class MessageService {
     // legacy set. See resolveAllowedWorkTypes.
     const data = await lambdaClient.message.getMessages.query({
       ...params,
-      includeFileWorks: true,
+      ...workTypeOptIn(),
     });
 
     return data as unknown as UIChatMessage[];
@@ -204,6 +201,10 @@ export class MessageService {
   getToolResultPayload = async (messageId: string) => {
     return lambdaClient.message.getToolResultPayload.query({ messageId });
   };
+
+  /** Status per pending card id (`null` when gone) plus a revision of the topic, for the approval poll. */
+  getInterventionSnapshot = async (topicId: string, messageIds: string[]) =>
+    lambdaClient.message.getInterventionSnapshot.query({ messageIds, topicId });
 
   /**
    * Bulk form, for surfaces that need every omitted row at once (export).
@@ -242,7 +243,12 @@ export class MessageService {
   ): Promise<MessageListPage | UIChatMessage[]> => {
     if (!supportsRoundCursor(params)) return this.getMessages(params);
 
-    return this.getMessagesByRoundCursor(params, null);
+    // A page primed for this conversation (see `primeMessageListPage`) answers
+    // its first read; if that request failed, read again rather than fail.
+    const primed = takePrimedMessageListPage(params);
+    if (primed) return primed.catch(() => readMessagesByRoundCursor(params, null));
+
+    return readMessagesByRoundCursor(params, null);
   };
 
   /**
@@ -260,39 +266,22 @@ export class MessageService {
     // current window instead of hitting the authed endpoint.
     if (params.agentShareId) return { messages: [], olderCursor: null };
 
-    if (supportsRoundCursor(params)) return this.getMessagesByRoundCursor(params, cursor);
+    if (supportsRoundCursor(params)) return readMessagesByRoundCursor(params, cursor);
 
     const data = await lambdaClient.message.getMessages.query({
       ...params,
       before: { createdAt: new Date(cursor.createdAt), id: cursor.id },
-      includeFileWorks: true,
+      ...workTypeOptIn(),
     });
 
     return { messages: data as unknown as UIChatMessage[] };
   };
 
-  private getMessagesByRoundCursor = async (
-    params: MessageReadQueryContext,
-    cursor: MessageRoundCursor | null,
-  ): Promise<MessageListPage> => {
-    const page = await lambdaClient.message.getMessagesByCursor.query({
-      agentId: params.agentId,
-      countBudget: MESSAGE_PAGE_ROW_BUDGET,
-      cursor,
-      groupId: params.groupId,
-      includeFileWorks: true,
-      projectToolPayloads: params.projectToolPayloads,
-      // The row budget is the real bound; ask for as many whole rounds as it holds.
-      roundLimit: MESSAGE_PAGE_ROW_BUDGET,
-      skipWorks: params.skipWorks,
-      topicId: params.topicId,
-      topicShareId: params.topicShareId,
-    });
-
-    return {
-      messages: page.messages as unknown as UIChatMessage[],
-      olderCursor: page.nextCursor,
-    };
+  searchInTopic = async (params: {
+    keyword: string;
+    topicId: string;
+  }): Promise<TopicMessageSearchMatch[]> => {
+    return lambdaClient.message.searchInTopic.query(params);
   };
 
   diagnoseTopic = async (params: { agentId?: string | null; topicId: string }) => {

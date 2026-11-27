@@ -1,24 +1,22 @@
-import { Flexbox, Icon } from '@lobehub/ui';
-import { Accordion, Divider, Text } from '@lobehub/ui/base-ui';
-import { createStaticStyles } from 'antd-style';
+import { Accordion, Divider, Flexbox, Icon, Text } from '@lobehub/ui';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
 import { ChevronRight } from 'lucide-react';
 import { memo, type ReactNode, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useDensity } from '@/styles/density';
+
 const PROCESS_KEY = 'process';
 
-const styles = createStaticStyles(({ css, cssVar }) => ({
-  title: css`
-    min-width: 0;
-    color: ${cssVar.colorTextTertiary};
-    white-space: nowrap;
-    transition: color 150ms ${cssVar.motionEaseOut};
-
-    &:hover {
-      color: ${cssVar.colorText};
-    }
-  `,
-}));
+const styles = stylex.create({
+  title: {
+    minWidth: '0',
+    color: { 'default': cssVar.colorTextTertiary, ':hover': cssVar.colorText },
+    whiteSpace: 'nowrap',
+    transition: `color 150ms ${cssVar.motionEaseOut}`,
+  },
+});
 
 /**
  * The Accordion's borderless header paints a hover fill that bleeds outward
@@ -35,6 +33,7 @@ const TRIGGER_STYLE = { font: 'inherit', padding: 0 } as const;
 /** The stripped header has no padding of its own, so the expanded process would
  *  otherwise start flush against it. */
 const CONTENT_STYLE = { paddingBlockStart: 8 } as const;
+const COMPACT_CONTENT_STYLE = { paddingBlockEnd: 4, paddingBlockStart: 4 } as const;
 
 interface ProcessFoldProps {
   /** Rendered process (reasoning + tools + intermediate prose); shown only when expanded. */
@@ -57,11 +56,12 @@ const ProcessFold = memo<ProcessFoldProps>(
   ({ children, durationText, stepCount, defaultExpanded = false }) => {
     const { t } = useTranslation('chat');
     const [expanded, setExpanded] = useState(defaultExpanded);
+    const { compact } = useDensity();
     const value = useMemo(() => (expanded ? [PROCESS_KEY] : []), [expanded]);
 
     const title = (
-      <Flexbox horizontal align={'center'} className={styles.title} gap={6}>
-        <Text style={{ color: 'inherit', minWidth: 0 }}>
+      <Flexbox horizontal align={'center'} className={stylex.props(styles.title).className} gap={6}>
+        <Text style={{ color: 'inherit', fontSize: compact ? 13 : undefined, minWidth: 0 }}>
           {durationText
             ? t('turnProcess.ranFor', { count: stepCount, duration: durationText })
             : t('turnProcess.done', { count: stepCount })}
@@ -83,9 +83,13 @@ const ProcessFold = memo<ProcessFoldProps>(
         <Accordion
           hideIndicator
           items={[{ children, key: PROCESS_KEY, title }]}
-          styles={{ content: CONTENT_STYLE, header: HEADER_STYLE, trigger: TRIGGER_STYLE }}
           value={value}
           variant={'borderless'}
+          styles={{
+            content: compact ? COMPACT_CONTENT_STYLE : CONTENT_STYLE,
+            header: HEADER_STYLE,
+            trigger: TRIGGER_STYLE,
+          }}
           onValueChange={(next) => setExpanded(next.includes(PROCESS_KEY))}
         />
         <Divider style={{ marginBlock: 0 }} />

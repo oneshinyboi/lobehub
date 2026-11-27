@@ -1,7 +1,6 @@
 'use client';
 
-import { AGENT_CHAT_URL } from '@lobechat/const';
-import { type ModalInstance } from '@lobehub/ui/base-ui';
+import { type ModalInstance } from '@lobehub/ui';
 import {
   createContext,
   lazy,
@@ -16,13 +15,16 @@ import {
   useState,
 } from 'react';
 
+import type { OpenCreateAgentIdentityModalOptions } from '@/features/AgentIdentityModal';
 import EditingPopover from '@/features/EditingPopover';
-import type { OpenCreateAgentModalOptions } from '@/features/HomeSidebar/hooks/useCreateModal';
+import type {
+  CreateAgentModalSubmitOptions,
+  OpenCreateAgentModalOptions,
+} from '@/features/HomeSidebar/hooks/useCreateModal';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { openLabelFormModal } from '@/features/WorkspaceSetting/Labels/LabelFormModal';
 import { useAgentStore } from '@/store/agent';
 import { builtinAgentSelectors } from '@/store/agent/selectors';
-import { useGlobalStore } from '@/store/global';
 import { useHomeStore } from '@/store/home';
 
 import ConfigGroupModal from './Modals/ConfigGroupModal';
@@ -45,9 +47,8 @@ interface OpenCreateModalOptions {
   /**
    * Threaded into the create flow so the resulting agent / group lands in the
    * Private bucket of the sidebar. Omitted means "public" — the existing
-   * default. Honored by the inner CreateModalRenderer when it calls
-   * `storeCreateAgent` (the chat-group path defers to its own
-   * publish-to-workspace toggle inside the profile page).
+   * default. The agent form passes it to `createAgent`; the group path
+   * forwards it to `sendAsGroup`.
    */
   visibility?: 'private' | 'public';
 }
@@ -97,74 +98,53 @@ export const useOptionalAgentModal = () => {
   return use(AgentModalContext);
 };
 
-interface CreateModalRendererProps {
+interface CreateGroupModalRendererProps {
   groupId?: string;
   onClose: () => void;
-  type: 'agent' | 'group';
   visibility?: 'private' | 'public';
 }
 
-const CreateModalRenderer = memo<CreateModalRendererProps>(
-  ({ type, groupId, onClose, visibility }) => {
-    const navigate = useWorkspaceAwareNavigate();
+/** Groups still start from a prompt: describe the group and the builder assembles it. */
+const CreateGroupModalRenderer = memo<CreateGroupModalRendererProps>(
+  ({ groupId, onClose, visibility }) => {
     const inboxAgentId = useAgentStore(builtinAgentSelectors.inboxAgentId);
-    const storeCreateAgent = useAgentStore((s) => s.createAgent);
-    const refreshAgentList = useHomeStore((s) => s.refreshAgentList);
-    const sendAsAgent = useHomeStore((s) => s.sendAsAgent);
     const sendAsGroup = useHomeStore((s) => s.sendAsGroup);
 
+    // The dialog's visibility field starts from the caller's context and hands
+    // back what the user settled on.
     const handleSubmit = useCallback(
-      async (prompt: string) => {
-        if (type === 'agent') {
-          await sendAsAgent({ groupId, message: prompt, visibility });
-        } else {
-          await sendAsGroup({ groupId, message: prompt, visibility });
-        }
+      async (prompt: string, options?: CreateAgentModalSubmitOptions) => {
+        await sendAsGroup({
+          groupId,
+          message: prompt,
+          visibility: options?.visibility ?? visibility,
+        });
       },
-      [type, sendAsAgent, sendAsGroup, groupId, visibility],
+      [sendAsGroup, groupId, visibility],
     );
 
-    const handleCreateBlank = useCallback(async () => {
-      if (type === 'agent') {
-        const result = await storeCreateAgent({ groupId, visibility });
-        useGlobalStore.getState().toggleAgentBuilderPanel(true);
-        navigate(`/agent/${result.agentId}/profile`);
-        await refreshAgentList();
-      } else {
-        await sendAsGroup({ groupId, message: '', visibility });
-      }
-    }, [type, storeCreateAgent, navigate, refreshAgentList, sendAsGroup, groupId, visibility]);
-
-    const handleOpenSkills = useCallback(
-      (identifier: string) => {
-        onClose();
-        navigate(`/settings/skill?skill=${encodeURIComponent(identifier)}`);
+    const handleCreateBlank = useCallback(
+      async (options?: CreateAgentModalSubmitOptions) => {
+        await sendAsGroup({ groupId, message: '', visibility: options?.visibility ?? visibility });
       },
-      [navigate, onClose],
+      [sendAsGroup, groupId, visibility],
     );
-
-    const handleTryInLobeAI = useCallback(() => {
-      if (!inboxAgentId) return;
-
-      navigate(AGENT_CHAT_URL(inboxAgentId, false));
-    }, [inboxAgentId, navigate]);
 
     // Mounted only while the modal should be open, so the open/close bridge is
     // just this component's lifetime — the panel itself lives in the ModalHost.
     const openArgsRef = useRef<OpenCreateAgentModalOptions>(undefined);
     openArgsRef.current = {
       agentId: inboxAgentId,
-      type,
+      type: 'group',
       onClosed: onClose,
       onCreateBlank: handleCreateBlank,
-      onOpenSkills: handleOpenSkills,
       onSubmit: handleSubmit,
-      onTryInLobeAI: handleTryInLobeAI,
+      visibility: { groupId, visibility },
     };
 
     useEffect(() => {
-      // Imported here rather than at module scope so the create-agent chunk (it
-      // pulls in the whole ChatInput stack) still loads only when the modal opens.
+      // Imported here rather than at module scope so the create chunk (it pulls
+      // in the whole ChatInput stack) still loads only when the modal opens.
       let cancelled = false;
       let instance: ModalInstance | undefined;
 
@@ -174,6 +154,47 @@ const CreateModalRenderer = memo<CreateModalRendererProps>(
           instance = openCreateAgentModal(openArgsRef.current!);
         },
       );
+
+      return () => {
+        cancelled = true;
+        instance?.close();
+      };
+    }, []);
+
+    return null;
+  },
+);
+
+interface CreateAgentIdentityRendererProps {
+  groupId?: string;
+  onClose: () => void;
+  visibility?: 'private' | 'public';
+}
+
+/**
+ * New agents start from the identity form (avatar, name, role, description,
+ * slug) and land on their profile page, where the rest is configured.
+ */
+const CreateAgentIdentityRenderer = memo<CreateAgentIdentityRendererProps>(
+  ({ groupId, onClose, visibility }) => {
+    const navigate = useWorkspaceAwareNavigate();
+
+    const openArgsRef = useRef<OpenCreateAgentIdentityModalOptions>(undefined);
+    openArgsRef.current = {
+      groupId,
+      onClosed: onClose,
+      onCreated: (agentId) => navigate(`/agent/${agentId}/profile`),
+      visibility,
+    };
+
+    useEffect(() => {
+      let cancelled = false;
+      let instance: ModalInstance | undefined;
+
+      void import('@/features/AgentIdentityModal').then(({ openCreateAgentIdentityModal }) => {
+        if (cancelled) return;
+        instance = openCreateAgentIdentityModal(openArgsRef.current!);
+      });
 
       return () => {
         cancelled = true;
@@ -260,10 +281,16 @@ export const AgentModalProvider = memo<AgentModalProviderProps>(({ children }) =
 
   return (
     <AgentModalContext value={contextValue}>
-      {createModalOpen && (
-        <CreateModalRenderer
+      {createModalOpen && createModalType === 'agent' && (
+        <CreateAgentIdentityRenderer
           groupId={createModalGroupId}
-          type={createModalType}
+          visibility={createModalVisibility}
+          onClose={() => setCreateModalOpen(false)}
+        />
+      )}
+      {createModalOpen && createModalType === 'group' && (
+        <CreateGroupModalRenderer
+          groupId={createModalGroupId}
           visibility={createModalVisibility}
           onClose={() => setCreateModalOpen(false)}
         />

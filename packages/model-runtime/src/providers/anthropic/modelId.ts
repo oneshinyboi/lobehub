@@ -88,6 +88,31 @@ const hasMinorVersionAtLeast = (parsed: ParsedClaudeModelId, minorVersion: numbe
 const isClaudeFamily = (parsed: ParsedClaudeModelId, families: readonly string[]): boolean =>
   families.includes(parsed.family);
 
+// By-value definitions require inline-tools-2026-09-15. Keep unverified model aliases on the normal path.
+// https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+const inlineToolModels = new Set([
+  'claude-opus-4-8',
+  'claude-opus-5',
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
+  'claude-fable-5',
+  'claude-fable-5-1',
+  'claude-fable-5-2',
+  'claude-mythos-5',
+  'claude-mythos-5-1',
+  'claude-mythos-5-2',
+]);
+
+export const supportsClaudeInlineToolChanges = (model: string): boolean => {
+  const parsed = parseClaudeModelId(model);
+  return (
+    !!parsed &&
+    parsed.source !== 'bedrock' &&
+    inlineToolModels.has(parsed.normalizedModelId.replace(/-\d{8}$/, '').replaceAll('.', '-'))
+  );
+};
+
 export const isContextCachingModel = (model: string): boolean => {
   const parsed = parseClaudeModelId(model);
   if (!parsed) return false;
@@ -208,7 +233,10 @@ export const supportsClaudeEffortLevel = (
   if (!parsed) return false;
 
   const isSupportedModel =
-    (parsed.majorVersion === 5 && isClaudeFamily(parsed, CLAUDE_5_EFFORT_FAMILIES)) ||
+    (parsed.majorVersion === 5 &&
+      (isClaudeFamily(parsed, CLAUDE_5_EFFORT_FAMILIES) ||
+        // Haiku 5.5 is the first Haiku with effort, and it supports all five levels.
+        (parsed.family === 'haiku' && hasMinorVersionAtLeast(parsed, 5)))) ||
     (parsed.majorVersion === 4 &&
       ((parsed.family === 'opus' &&
         parsed.minorVersion !== undefined &&

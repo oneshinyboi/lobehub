@@ -1,4 +1,5 @@
 import type { AgentHookEvent, AgentState } from '@lobechat/agent-runtime';
+import { getLlmCallCount } from '@lobechat/agent-runtime';
 import type { ThreadMetadata } from '@lobechat/types';
 import { ThreadStatus } from '@lobechat/types';
 import debug from 'debug';
@@ -24,21 +25,54 @@ export function calculateTotalTokens(usage?: AgentState['usage']): number | unde
 }
 
 /**
- * Usage a continued sub-agent thread accumulated in its earlier runs. Every
- * run starts fresh counters and each thread write replaces `metadata`, so a
- * follow-up run carries these forward and adds its own usage on top.
+ * What a thread's metadata carries from one write and one run to the next.
+ * Every thread write replaces `metadata`, so each writer spreads these back
+ * in: the tool call that spawned the thread (how the UI tells a sub-agent
+ * from an ordinary thread), the usage of earlier runs, which a follow-up
+ * run adds its own usage on top of, and an external agent's native session,
+ * which a follow-up resumes.
  */
-export type ThreadUsageBaseline = Pick<
+export type ThreadCarryOver = Pick<
   ThreadMetadata,
-  'totalCost' | 'totalMessages' | 'totalTokens' | 'totalToolCalls'
+  | 'heteroSessionId'
+  | 'runUsageBaseline'
+  | 'sourceToolCallId'
+  | 'totalCost'
+  | 'totalLlmCalls'
+  | 'totalMessages'
+  | 'totalTokens'
+  | 'totalToolCalls'
 >;
 
-export const pickThreadUsageBaseline = (metadata?: ThreadMetadata | null): ThreadUsageBaseline => ({
+export const pickThreadCarryOver = (metadata?: ThreadMetadata | null): ThreadCarryOver => ({
+  heteroSessionId: metadata?.heteroSessionId,
+  runUsageBaseline: {
+    totalCost: metadata?.totalCost,
+    totalLlmCalls: metadata?.totalLlmCalls,
+    totalTokens: metadata?.totalTokens,
+    totalToolCalls: metadata?.totalToolCalls,
+  },
+  sourceToolCallId: metadata?.sourceToolCallId,
   totalCost: metadata?.totalCost,
   totalMessages: metadata?.totalMessages,
+  totalLlmCalls: metadata?.totalLlmCalls,
   totalTokens: metadata?.totalTokens,
   totalToolCalls: metadata?.totalToolCalls,
 });
+
+/** Best-effort read of the native session an external agent bound to the thread. */
+const readLiveHeteroSessionId = async (
+  threadModel: ThreadModel,
+  threadId: string,
+): Promise<string | undefined> => {
+  try {
+    const metadata = (await threadModel.findById(threadId))?.metadata as ThreadMetadata | null;
+    return metadata?.heteroSessionId;
+  } catch (error) {
+    log('reading the live session of thread %s failed: %O', threadId, error);
+    return undefined;
+  }
+};
 
 const addUsage = (baseline?: number, run?: number): number | undefined =>
   baseline === undefined ? run : baseline + (run ?? 0);
@@ -79,6 +113,8 @@ export function createThreadMetadataCallbacks(
             operationId: state.operationId,
             startedAt,
             totalMessages: state.messages?.length ?? 0,
+            totalSteps: getLlmCallCount(state),
+            totalLlmCalls: getLlmCallCount(state),
             totalTokens: calculateTotalTokens(state.usage),
             totalToolCalls: accumulatedToolCalls,
           },
@@ -155,6 +191,8 @@ export function createThreadMetadataCallbacks(
             startedAt,
             totalCost: finalState.cost?.total,
             totalMessages: finalState.messages?.length ?? 0,
+            totalSteps: getLlmCallCount(finalState),
+            totalLlmCalls: getLlmCallCount(finalState),
             totalTokens: calculateTotalTokens(finalState.usage),
             totalToolCalls: accumulatedToolCalls,
           },
@@ -182,10 +220,19 @@ export function createThreadHooks(
   messageModel: MessageModel,
   threadId: string,
   startedAt: string,
-  sourceMessageId: string,
+  sourceMessageId: string | undefined,
   logScope: 'execSubAgent' | 'execVirtualSubAgent',
-  usageBaseline: ThreadUsageBaseline = {},
+  carryOver: ThreadCarryOver = {},
+  options: {
+    /**
+     * Copy the run's final answer into the source message. Off for background
+     * sub-agents, whose source message is the start receipt the parent already
+     * read — their answer is delivered as a separate message instead.
+     */
+    updateSourceMessage?: boolean;
+  } = {},
 ): AgentHook[] {
+  const { updateSourceMessage = true } = options;
   return [
     {
       handler: async (event: AgentHookEvent) => {
@@ -195,15 +242,16 @@ export function createThreadHooks(
         try {
           await threadModel.update(threadId, {
             metadata: {
+              heteroSessionId: carryOver.heteroSessionId,
               operationId: event.operationId,
+              sourceToolCallId: carryOver.sourceToolCallId,
               startedAt,
-              totalCost: usageBaseline.totalCost,
+              totalCost: carryOver.totalCost,
               totalMessages: state.messages?.length ?? 0,
-              totalTokens: addUsage(usageBaseline.totalTokens, calculateTotalTokens(state.usage)),
-              totalToolCalls: addUsage(
-                usageBaseline.totalToolCalls,
-                state.usage?.tools?.totalCalls,
-              ),
+              totalSteps: addUsage(carryOver.totalLlmCalls, getLlmCallCount(state)),
+              totalLlmCalls: addUsage(carryOver.totalLlmCalls, getLlmCallCount(state)),
+              totalTokens: addUsage(carryOver.totalTokens, calculateTotalTokens(state.usage)),
+              totalToolCalls: addUsage(carryOver.totalToolCalls, state.usage?.tools?.totalCalls),
             },
           });
         } catch (error) {
@@ -255,35 +303,41 @@ export function createThreadHooks(
         }
 
         try {
-          // Update source message with summary
+          // Bridged runs publish through result control; only standalone thread
+          // runs own a source-message summary write here.
           const lastAssistantMessage = finalState.messages
             ?.slice()
             .reverse()
             .find((m: { role: string }) => m.role === 'assistant');
 
-          if (lastAssistantMessage?.content) {
+          if (updateSourceMessage && sourceMessageId && lastAssistantMessage?.content) {
             await messageModel.update(sourceMessageId, {
               content: lastAssistantMessage.content,
             });
           }
 
           const formattedError = formatErrorForMetadata(finalState.error);
+          // An external agent records its native session on the thread while it
+          // runs; the claim-time copy predates it. Keep the live one, or a run
+          // ended without `heteroFinish` (watchdog abandon) loses its resume.
+          const liveSessionId = await readLiveHeteroSessionId(threadModel, threadId);
 
           await threadModel.update(threadId, {
             metadata: {
               completedAt,
               duration,
               error: formattedError,
+              heteroSessionId: liveSessionId ?? carryOver.heteroSessionId,
               operationId: finalState.operationId,
+              sourceToolCallId: carryOver.sourceToolCallId,
               startedAt,
-              totalCost: addUsage(usageBaseline.totalCost, finalState.cost?.total),
+              totalCost: addUsage(carryOver.totalCost, finalState.cost?.total),
               totalMessages: finalState.messages?.length ?? 0,
-              totalTokens: addUsage(
-                usageBaseline.totalTokens,
-                calculateTotalTokens(finalState.usage),
-              ),
+              totalSteps: addUsage(carryOver.totalLlmCalls, getLlmCallCount(finalState)),
+              totalLlmCalls: addUsage(carryOver.totalLlmCalls, getLlmCallCount(finalState)),
+              totalTokens: addUsage(carryOver.totalTokens, calculateTotalTokens(finalState.usage)),
               totalToolCalls: addUsage(
-                usageBaseline.totalToolCalls,
+                carryOver.totalToolCalls,
                 finalState.usage?.tools?.totalCalls,
               ),
             },
@@ -308,23 +362,20 @@ export function createThreadHooks(
 }
 
 /**
-   * Completion bridge for the server `callSubAgent` deferred-tool path.
-   *
-   * Fires on the sub-op's completion (success or failure) and delegates to
-   * `AgentRuntimeService.completeSubAgentBridge`: backfill the parent's
-   * placeholder tool message, then barrier-check + CAS-resume the parked
-   * parent op.
-   *
-   * Transport adapts to the runtime mode like every other lifecycle hook:
-   *   - local mode: the `handler` runs in-process with the child's finalState.
-   *   - queue mode: in-memory handlers don't survive cross-process steps, so
-   *     the serialized `webhook` config is delivered via QStash to
-   *     `/api/agent/webhooks/subagent-callback`, which re-enters the same
-   *     bridge method. `delivery: 'qstash'` is required — a plain fetch would
-
-
-   *     be rejected by the endpoint's QStash signature auth.
-   */
+ * Completion bridge for the server `callSubAgent` deferred-tool path.
+ *
+ * Fires on the sub-op's completion (success or failure) and delegates to
+ * `AgentRuntimeService.completeSubAgentBridge`: backfill the parent's
+ * placeholder tool message, then barrier-check + CAS-resume the parked
+ * parent op.
+ *
+ * Transport adapts to the runtime mode like every other lifecycle hook:
+ *   - local mode: the `handler` runs in-process with the child's finalState.
+ *   - queue mode: in-memory handlers don't survive cross-process steps, so
+ *     the serialized `webhook` config is delivered via QStash to
+ *     `/api/agent/webhooks/subagent-callback`, which re-enters the same
+ *     bridge method.
+ */
 export function createSubAgentBridgeHook(
   agentRuntimeService: AgentRuntimeService,
   parentOperationId: string,
@@ -361,9 +412,8 @@ export function createSubAgentBridgeHook(
       // answer (`lastAssistantContent`) — and any tool-produced attachments
       // the shared lifecycle event extractor inlines — through QStash.
       eventFields: ['operationId', 'reason', 'status'],
-      // The endpoint sits behind QStash signature auth, so the unsigned
-      // fetch fallback could never authenticate — it would only mask a
-      // publish failure as a silently-dropped 401, stranding the parent.
+      // A failed publish must surface instead of stranding the parent, so this
+      // critical bridge does not rely on the direct fetch fallback.
       fallback: 'none' as const,
       url: '/api/agent/webhooks/subagent-callback',
     },

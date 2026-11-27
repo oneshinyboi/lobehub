@@ -284,6 +284,9 @@ export const searchElasticsearchCandidates = async (
   }
   if (entity === 'messages') {
     mustNot.push({ term: { role: 'tool' } });
+    const { roles, topicId } = request.filters.messageScope ?? {};
+    if (roles?.length) filter.push({ terms: { role: roles } });
+    if (topicId) filter.push({ term: { topic_id: topicId } });
   }
   if (request.filters.excludeVirtual && entity === 'agents') {
     mustNot.push({ term: { virtual: true } });
@@ -306,6 +309,14 @@ export const searchElasticsearchCandidates = async (
       filter.push({ term: { file_type: DOCUMENT_FOLDER_TYPE } });
     } else if (documentKind === 'page') {
       filter.push({ term: { file_type: 'custom/document' } });
+      if (request.filters.excludeFileDerived) {
+        mustNot.push({
+          bool: { filter: [{ term: { source_type: 'file' } }, { exists: { field: 'file_id' } }] },
+        });
+      }
+    } else if (documentKind === 'fileContent') {
+      filter.push({ exists: { field: 'file_id' } }, { term: { source_type: 'file' } });
+      mustNot.push({ term: { file_type: DOCUMENT_FOLDER_TYPE } });
     } else if (documentKind === 'knowledgeBaseDocument') {
       filter.push({ terms: { knowledge_base_ids: request.filters.knowledgeBaseIds ?? [] } });
       mustNot.push({ term: { file_type: DOCUMENT_FOLDER_TYPE } });
@@ -318,6 +329,20 @@ export const searchElasticsearchCandidates = async (
       request.filters.excludeKnowledgeBaseIds?.length
     ) {
       mustNot.push({ terms: { knowledge_base_ids: request.filters.excludeKnowledgeBaseIds } });
+    }
+  }
+
+  if (
+    request.filters.timeRange &&
+    (entity === 'topics' || entity === 'messages' || entity === 'documents')
+  ) {
+    const { end, field, start } = request.filters.timeRange;
+    const dateRange = {
+      ...(start ? { gte: start.toISOString() } : {}),
+      ...(end ? { lte: end.toISOString() } : {}),
+    };
+    if (Object.keys(dateRange).length > 0) {
+      filter.push({ range: { [field === 'createdAt' ? 'created_at' : 'updated_at']: dateRange } });
     }
   }
 

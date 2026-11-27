@@ -1,10 +1,10 @@
-import { Icon } from '@lobehub/ui';
-import { Button, InputPassword, Text } from '@lobehub/ui/base-ui';
-import { Form, type FormInstance } from '@lobehub/ui/base-ui/form';
+import { Button, Icon, InputPassword, Text } from '@lobehub/ui';
+import { Form, type FormInstance } from '@lobehub/ui/form';
 import { Lock } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import InlineErrorText from '@/components/InlineErrorText';
 import AuthCard from '@/features/AuthCard';
 
 export interface SignInPasswordStepProps {
@@ -14,6 +14,8 @@ export interface SignInPasswordStepProps {
   loading: boolean;
   onBackToEmail: () => void;
   onForgotPassword: () => Promise<void>;
+  /** Why sending the password reset email failed, shown under the "Forgot password?" link */
+  sendError?: string;
 }
 
 export const SignInPasswordStep = ({
@@ -23,6 +25,7 @@ export const SignInPasswordStep = ({
   loading,
   onBackToEmail,
   onForgotPassword,
+  sendError,
 }: SignInPasswordStepProps) => {
   const { t } = useTranslation('auth');
   const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -98,6 +101,7 @@ export const SignInPasswordStep = ({
           {t('betterAuth.signin.forgotPassword')}
         </a>
       </Text>
+      {sendError && <InlineErrorText style={{ marginTop: 12 }}>{sendError}</InlineErrorText>}
     </AuthCard>
   );
 };

@@ -151,3 +151,27 @@ export const wsOwnerProcedure = requireWorkspace.use(requireWorkspaceRole('owner
 export const wsAdminProcedure = requireWorkspace.use(requireWorkspaceRole('admin'));
 
 export const wsCompatProcedure = authedProcedure.use(cloudWorkspaceAuth);
+
+/**
+ * `cloudWorkspaceAuth` for the only routers an external contact of a workspace
+ * may reach: the address book and Channels. Upstream's OSS stub adds no
+ * workspace identity of its own, so an external contact is always treated as
+ * personal here (CONTEXT.md non-goals: contacts / Channels DMs stay stubs).
+ */
+export const externalContactWorkspaceAuth = trpc.middleware(async (opts) =>
+  opts.next({
+    ctx: {
+      isExternalContact: false as boolean,
+      workspaceSlug: undefined as string | undefined,
+    },
+  }),
+);
+
+export const wsExternalCompatProcedure = authedProcedure.use(externalContactWorkspaceAuth);
+
+/** Refuses a workspace's external contact, matching the upstream stub. */
+export const denyExternalContact = trpc.middleware(async ({ ctx, next }) => {
+  if ((ctx as { isExternalContact?: boolean }).isExternalContact)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not available to external contacts' });
+  return next();
+});

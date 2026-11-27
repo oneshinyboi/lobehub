@@ -1,10 +1,10 @@
 'use client';
 
-import { Flexbox } from '@lobehub/ui';
-import { Avatar } from '@lobehub/ui/base-ui';
-import { createStaticStyles, cssVar } from 'antd-style';
+import { createStaticStyles, cssVar, Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
 
+import AgentAvatar from '@/components/AgentAvatar';
+import { useAgentAvatarActivity } from '@/features/AgentAvatarActivity/useAgentAvatarActivity';
 import { AgentMigrationBadge, useAgentTransferJob } from '@/features/AgentTransferMigration';
 import { useAgentContext } from '@/features/Conversation/useAgentContext';
 import NavHeader from '@/features/NavHeader';
@@ -14,6 +14,7 @@ import { useEffectiveWorkingDirectory } from '@/hooks/useEffectiveWorkingDirecto
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { useElectronStore } from '@/store/electron';
+import { sidebarRow } from '@/styles/density.stylex';
 
 import HeaderActions from './HeaderActions';
 import ShareButton from './ShareButton';
@@ -111,7 +112,7 @@ const headerStyles = createStaticStyles(({ css }) => ({
     align-items: center;
     justify-content: center;
 
-    height: 44px;
+    height: ${sidebarRow.headerHeight};
 
     ${FLOATING_HEADER_QUERY} {
       display: flex;
@@ -147,6 +148,8 @@ const Header = memo(() => {
   // the rest of the migration UI, so this adds no extra polling.
   const { data: transferJob } = useAgentTransferJob({ agentId });
 
+  const avatarActivity = useAgentAvatarActivity(splitView ? agentId : undefined);
+
   return (
     <div className={headerStyles.container}>
       <NavHeader
@@ -159,10 +162,14 @@ const Header = memo(() => {
             gap={4}
           >
             {splitView && agentMeta && (
-              <Avatar
+              <AgentAvatar
+                {...avatarActivity.avatar}
+                {...avatarActivity.hover}
+                agentId={agentId}
                 alt={agentMeta.title}
                 avatar={agentMeta.avatar}
                 background={agentMeta.backgroundColor}
+                name={agentMeta.title}
                 shape={'square'}
                 size={24}
                 style={{ flex: 'none', marginInlineStart: 8 }}

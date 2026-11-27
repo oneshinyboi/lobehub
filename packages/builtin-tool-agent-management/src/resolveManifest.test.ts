@@ -21,6 +21,14 @@ describe('resolveAgentManagementManifest', () => {
     expect(resolveAgentManagementManifest({})).toBe(AgentManagementManifest);
   });
 
+  // installPlugin(source: 'market') needs an identifier the model can only get
+  // from a marketplace search; without one it guessed ids.
+  it('pairs market installPlugin with searchMarketTools', () => {
+    const names = apiNames(AgentManagementManifest);
+    expect(names).toContain(AgentManagementApiName.searchMarketTools);
+    expect(names).toContain(AgentManagementApiName.installPlugin);
+  });
+
   it('advertises only the callAgent params every runtime honors', () => {
     const callAgent = AgentManagementManifest.api.find(
       (api) => api.name === AgentManagementApiName.callAgent,
@@ -45,6 +53,7 @@ describe('resolveAgentManagementManifest', () => {
     // the rest of agent-management stays available
     expect(names).toContain(AgentManagementApiName.createAgent);
     expect(names).toContain(AgentManagementApiName.searchAgent);
+    expect(names).toContain(AgentManagementApiName.searchMarketTools);
     expect(names).toContain(AgentManagementApiName.getAgentDetail);
     // exactly one API removed
     expect(names).toHaveLength(AgentManagementManifest.api.length - 1);
@@ -98,5 +107,20 @@ describe('systemPromptWithoutCallAgent', () => {
     ]) {
       expect(systemPromptWithoutCallAgent).toContain(`<${section}>`);
     }
+  });
+});
+
+describe('agent self-configuration', () => {
+  /**
+   * @example
+   * The activator lists this tool by `meta.description`, so a model told
+   * "你是我的文案助理" must be able to find it as the place to configure itself,
+   * and the system role must send the role there instead of to user memory.
+   */
+  it('advertises self-configuration for role assignments', () => {
+    expect(AgentManagementManifest.meta.description).toContain('your own system prompt');
+    expect(systemPrompt).toContain('**Role assignments are self-configuration**');
+    expect(systemPrompt).toContain('你是我的文案助理');
+    expect(systemPromptWithoutCallAgent).toContain('**Role assignments are self-configuration**');
   });
 });

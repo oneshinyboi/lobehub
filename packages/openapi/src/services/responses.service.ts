@@ -1,11 +1,14 @@
 import type { AgentState } from '@lobechat/agent-runtime';
 
+import { TopicModel } from '@/database/models/topic';
 import { createStreamEventManager } from '@/server/modules/AgentRuntime/factory';
 import { InMemoryStreamEventManager } from '@/server/modules/AgentRuntime/InMemoryStreamEventManager';
 import type {
   StreamChunkData,
   StreamEvent,
 } from '@/server/modules/AgentRuntime/StreamEventManager';
+import { assertCanUseWorkspaceAgent } from '@/server/routers/lambda/_helpers/workspaceAgentGuard';
+import { assertCanUseAgentRunConversation } from '@/server/routers/lambda/aiAgent/guards';
 import { AgentRuntimeService } from '@/server/services/agentRuntime';
 import { AiAgentService } from '@/server/services/aiAgent';
 
@@ -15,11 +18,21 @@ import type {
   FunctionCallOutputItem,
   InputItem,
   OutputItem,
+  ResponseError,
   ResponseObject,
   ResponseStreamEvent,
   ResponseUsage,
   Tool,
 } from '../types/responses.type';
+import {
+  assertCanResumeParkedRun,
+  ClientToolResumeError,
+  executeResponseRun,
+  parkedOnToolsReason,
+  pendingFunctionCallItems,
+  resolveParkedCallerRun,
+  resumeParkedClientTools,
+} from './client-tool-resume.responses';
 
 /**
  * Response API Service
@@ -257,83 +270,192 @@ export class ResponsesService extends BaseService {
   }
 
   /**
+   * Authorize a run before anything is created or read, mirroring the tRPC
+   * `aiAgent.execAgent` chain: workspace `message:create` capability (denies a
+   * viewer), `use` on the agent and every parent group, and `use` on the
+   * conversation a `previous_response_id` continues.
+   *
+   * The topic lookup fails closed on ids the caller cannot see at all: in
+   * personal mode `TopicModel` only resolves the caller's own rows, and in
+   * workspace mode — where every member's topic is readable — the resource
+   * guard still has to pass, so a colleague's private conversation cannot be
+   * pulled into context or written back.
+   */
+  async assertRunAuthorized(params: CreateResponseRequest): Promise<void> {
+    const permission = await this.resolveOperationPermission('MESSAGE_CREATE');
+    if (!permission.isPermitted) {
+      throw this.createAuthorizationError(
+        permission.message || 'No permission to create a response',
+      );
+    }
+
+    const previousTopicId = params.previous_response_id
+      ? this.extractTopicIdFromResponseId(params.previous_response_id)
+      : null;
+    if (previousTopicId) {
+      const topic = await new TopicModel(this.db, this.userId, this.workspaceId).findById(
+        previousTopicId,
+      );
+      if (!topic) {
+        throw this.createNotFoundError('The previous response was not found');
+      }
+    }
+
+    await assertCanUseWorkspaceAgent({
+      agentId: params.model,
+      db: this.db,
+      userId: this.userId,
+      workspaceId: this.workspaceId,
+    });
+    await assertCanUseAgentRunConversation({
+      db: this.db,
+      topicId: previousTopicId,
+      userId: this.userId,
+      workspaceId: this.workspaceId,
+    });
+
+    // A request carrying tool outputs resumes the run parked on this topic,
+    // which executes the parked operation's agent — not `params.model`. Check
+    // that agent here too, so its denial is an HTTP refusal instead of a
+    // `status: "failed"` body or an SSE event on an already-opened stream.
+    if (previousTopicId && this.extractFunctionCallOutputs(params.input).length > 0) {
+      const parked = await resolveParkedCallerRun({
+        agentRuntimeService: new AgentRuntimeService(this.db, this.userId, {
+          queueService: null,
+          workspaceId: this.workspaceId,
+        }),
+        db: this.db,
+        topicId: previousTopicId,
+        userId: this.userId,
+        workspaceId: this.workspaceId,
+      });
+      if (parked) {
+        await assertCanResumeParkedRun({
+          db: this.db,
+          run: parked,
+          userId: this.userId,
+          workspaceId: this.workspaceId,
+        });
+      }
+    }
+  }
+
+  /**
+   * Start the run a request asks for. Function call outputs for a run parked on
+   * the caller's tools resume that same run; anything else creates a new
+   * operation (model field = agent id) without auto-start.
+   */
+  private async startRun(
+    params: CreateResponseRequest,
+    options: { agentRuntimeService: AgentRuntimeService; stream: boolean },
+  ): Promise<{ operationId: string; resumed?: boolean; topicId?: string }> {
+    // Resolve topicId from previous_response_id for multi-turn
+    const previousTopicId = params.previous_response_id
+      ? this.extractTopicIdFromResponseId(params.previous_response_id)
+      : null;
+    const functionCallOutputs = this.extractFunctionCallOutputs(params.input);
+    const isResumeFlow = functionCallOutputs.length > 0 && !!previousTopicId;
+
+    if (params.strict_tool_resume && !isResumeFlow) {
+      throw new ClientToolResumeError(
+        'Strict tool resume requires previous_response_id and function_call_output items.',
+      );
+    }
+
+    if (isResumeFlow) {
+      const resumed = await resumeParkedClientTools({
+        agentRuntimeService: options.agentRuntimeService,
+        db: this.db,
+        outputs: functionCallOutputs,
+        topicId: previousTopicId,
+        userId: this.userId,
+        workspaceId: this.workspaceId,
+      });
+      if (resumed) return { ...resumed, resumed: true, topicId: previousTopicId };
+      if (params.strict_tool_resume) {
+        throw new ClientToolResumeError(
+          'The response is no longer waiting for these tool outputs.',
+        );
+      }
+    }
+
+    const instructions = this.buildInstructions(params);
+    // No parked run to hand the outputs to: they become the next turn's prompt.
+    const prompt = isResumeFlow
+      ? this.buildToolResultPrompt(functionCallOutputs)
+      : this.extractPrompt(params.input);
+
+    this.log('info', 'Creating response via execAgent', {
+      hasInstructions: !!instructions,
+      isResumeFlow,
+      model: params.model,
+      previousTopicId,
+      prompt: prompt.slice(0, 50),
+    });
+
+    const additionalPluginIds = this.extractHostedToolIds(params.tools);
+    const functionTools = this.extractFunctionTools(params.tools);
+    const aiAgentService = new AiAgentService(this.db, this.userId, {
+      workspaceId: this.workspaceId,
+    });
+    const execResult = await aiAgentService.execAgent({
+      additionalPluginIds: additionalPluginIds.length > 0 ? additionalPluginIds : undefined,
+      agentId: params.model,
+      appContext: previousTopicId ? { topicId: previousTopicId } : undefined,
+      autoStart: false,
+      exclusivePluginIds: params.tools_mode === 'exclusive' ? additionalPluginIds : undefined,
+      functionTools: functionTools.length > 0 ? functionTools : undefined,
+      instructions,
+      prompt,
+      stream: options.stream,
+      trigger: 'openapi',
+    });
+
+    if (!execResult.success) {
+      throw new Error(execResult.error || 'Failed to create agent operation');
+    }
+
+    return { operationId: execResult.operationId, topicId: execResult.topicId };
+  }
+
+  /**
    * Create a response (non-streaming)
    * Calls execAgent with autoStart: false, then executeSync to wait for completion
    */
   async createResponse(params: CreateResponseRequest): Promise<ResponseObject> {
     const createdAt = Math.floor(Date.now() / 1000);
 
+    // Kept outside the `try` below: an authorization refusal is an HTTP error,
+    // not a `status: "failed"` response object.
+    await this.assertRunAuthorized(params);
+
     try {
-      const model = params.model;
-      const instructions = this.buildInstructions(params);
-
-      // Resolve topicId from previous_response_id for multi-turn
-      const previousTopicId = params.previous_response_id
-        ? this.extractTopicIdFromResponseId(params.previous_response_id)
-        : null;
-
-      // Check for function_call_output resume flow
-      const functionCallOutputs = this.extractFunctionCallOutputs(params.input);
-      const isResumeFlow = functionCallOutputs.length > 0 && previousTopicId;
-
-      const prompt = isResumeFlow
-        ? this.buildToolResultPrompt(functionCallOutputs)
-        : this.extractPrompt(params.input);
-
-      this.log('info', 'Creating response via execAgent', {
-        hasInstructions: !!instructions,
-        isResumeFlow,
-        model,
-        previousTopicId,
-        prompt: prompt.slice(0, 50),
-      });
-
-      // 1. Create agent operation without auto-start
-      // model field is used as agentId
-      const additionalPluginIds = this.extractHostedToolIds(params.tools);
-      const functionTools = this.extractFunctionTools(params.tools);
-      const aiAgentService = new AiAgentService(this.db, this.userId, {
-        workspaceId: this.workspaceId,
-      });
-      const execResult = await aiAgentService.execAgent({
-        additionalPluginIds: additionalPluginIds.length > 0 ? additionalPluginIds : undefined,
-        agentId: model,
-        appContext: previousTopicId ? { topicId: previousTopicId } : undefined,
-        autoStart: false,
-        functionTools: functionTools.length > 0 ? functionTools : undefined,
-        instructions,
-        prompt,
-        stream: false,
-        trigger: 'openapi',
-      });
-
-      if (!execResult.success) {
-        throw new Error(execResult.error || 'Failed to create agent operation');
-      }
-
-      // Generate response ID encoding topicId for multi-turn support
-      const responseId = this.generateResponseId(execResult.topicId);
-
-      // 2. Execute synchronously to completion
       const agentRuntimeService = new AgentRuntimeService(this.db, this.userId, {
         queueService: null,
         workspaceId: this.workspaceId,
       });
-      const finalState = await agentRuntimeService.executeSync(execResult.operationId);
+      const run = await this.startRun(params, { agentRuntimeService, stream: false });
+
+      // Generate response ID encoding topicId for multi-turn support
+      const responseId = this.generateResponseId(run.topicId);
+
+      // 2. Execute synchronously to completion
+      const finalState = await executeResponseRun(agentRuntimeService, run);
 
       // 3. Extract results from final state
       const { output, outputText } = this.extractOutputItems(finalState, responseId);
       const usage = this.extractUsage(finalState);
 
-      const isClientToolInterrupt =
-        finalState.status === 'waiting_for_async_tool' &&
-        finalState.interruption?.reason === 'client_tool_execution';
+      const parkedReason = parkedOnToolsReason(finalState);
+      const isClientToolInterrupt = !!parkedReason;
+      if (isClientToolInterrupt)
+        output.push(...pendingFunctionCallItems(finalState, output, responseId));
 
       return this.buildResponseObject({
         completedAt: isClientToolInterrupt ? null : Math.floor(Date.now() / 1000),
         createdAt,
         id: responseId,
-        incompleteDetails: isClientToolInterrupt ? { reason: 'client_tool_execution' } : undefined,
+        incompleteDetails: parkedReason ? { reason: parkedReason } : undefined,
         output,
         outputText,
         params,
@@ -345,13 +467,18 @@ export class ResponsesService extends BaseService {
         usage,
       });
     } catch (error) {
+      // Shared-service refusals (resource guards — including the parked-run
+      // check inside a resume that raced the preflight) are HTTP errors, not
+      // `status: "failed"` response objects.
+      if (error instanceof Error && error.name === 'TRPCError') throw error;
+
       const errorResponseId = this.generateResponseId();
       this.log('error', 'Response creation failed', { error, responseId: errorResponseId });
 
       return this.buildResponseObject({
         createdAt,
         error: {
-          code: 'server_error',
+          code: error instanceof ClientToolResumeError ? 'invalid_request_error' : 'server_error',
           message: error instanceof Error ? error.message : 'Unknown error',
         },
         id: errorResponseId,
@@ -377,73 +504,18 @@ export class ResponsesService extends BaseService {
     let releaseStream: (() => Promise<void>) | undefined;
 
     try {
-      const model = params.model;
-      const instructions = this.buildInstructions(params);
+      // Inside the generator the refusal can only degrade to a `response.failed`
+      // event; the controller repeats this check before opening SSE so a denied
+      // request never sees a 200.
+      await this.assertRunAuthorized(params);
 
-      // Resolve topicId from previous_response_id for multi-turn
-      const previousTopicId = params.previous_response_id
-        ? this.extractTopicIdFromResponseId(params.previous_response_id)
-        : null;
-
-      // Check for function_call_output resume flow
-      const functionCallOutputs = this.extractFunctionCallOutputs(params.input);
-      const isResumeFlow = functionCallOutputs.length > 0 && previousTopicId;
-
-      const prompt = isResumeFlow
-        ? this.buildToolResultPrompt(functionCallOutputs)
-        : this.extractPrompt(params.input);
-
-      // 1. Create agent operation (before generating responseId so we have topicId)
-      // model field is used as agentId
-      const additionalPluginIds = this.extractHostedToolIds(params.tools);
-      const functionTools = this.extractFunctionTools(params.tools);
-      const aiAgentService = new AiAgentService(this.db, this.userId, {
-        workspaceId: this.workspaceId,
-      });
-      const execResult = await aiAgentService.execAgent({
-        additionalPluginIds: additionalPluginIds.length > 0 ? additionalPluginIds : undefined,
-        agentId: model,
-        appContext: previousTopicId ? { topicId: previousTopicId } : undefined,
-        autoStart: false,
-        functionTools: functionTools.length > 0 ? functionTools : undefined,
-        instructions,
-        prompt,
-        stream: true,
-        trigger: 'openapi',
-      });
-
-      if (!execResult.success) {
-        throw new Error(execResult.error || 'Failed to create agent operation');
-      }
-
-      const operationId = execResult.operationId;
-
-      // Generate response ID encoding topicId for multi-turn support
-      const responseId = this.generateResponseId(execResult.topicId);
-
-      const response = this.buildResponseObject({
-        createdAt,
-        id: responseId,
-        output: [],
-        outputText: '',
-        params,
-        status: 'in_progress',
-      });
-
-      // Emit response.created + response.in_progress
-      yield { response, sequence_number: sequenceNumber++, type: 'response.created' as const };
-      yield {
-        response,
-        sequence_number: sequenceNumber++,
-        type: 'response.in_progress' as const,
-      };
-
-      // 2. Run the operation on the gateway-aware stream pipeline, with this
+      // 1. Run the operation on the gateway-aware stream pipeline, with this
       // generator's own subscription on a private in-memory manager.
       //
-      // `execAgent` above already registered this operation with the
-      // agent-gateway Durable Object (`publishAgentRuntimeInit`), and that DO
-      // only closes the session on an `agent_runtime_end`. Executing on a
+      // `execAgent` registers a new operation with the agent-gateway Durable
+      // Object (`publishAgentRuntimeInit`), and a run parked on client tools is
+      // still registered there; that DO only closes the session on an
+      // `agent_runtime_end`. Executing on a
       // manager nothing mirrors leaves the DO holding a run that finished long
       // ago as `running`, so its inactivity watchdog abandons the operation
       // ~10 minutes later — writing an `Operation abandoned: inactivity_watchdog`
@@ -471,6 +543,30 @@ export class ResponsesService extends BaseService {
         streamEventManager,
         workspaceId: this.workspaceId,
       });
+
+      // 2. Start the run (before generating responseId so we have topicId)
+      const run = await this.startRun(params, { agentRuntimeService, stream: true });
+      const operationId = run.operationId;
+
+      // Generate response ID encoding topicId for multi-turn support
+      const responseId = this.generateResponseId(run.topicId);
+
+      const response = this.buildResponseObject({
+        createdAt,
+        id: responseId,
+        output: [],
+        outputText: '',
+        params,
+        status: 'in_progress',
+      });
+
+      // Emit response.created + response.in_progress
+      yield { response, sequence_number: sequenceNumber++, type: 'response.created' as const };
+      yield {
+        response,
+        sequence_number: sequenceNumber++,
+        type: 'response.in_progress' as const,
+      };
 
       // 3. Setup async event queue to bridge push events → pull-based generator
       const eventQueue: StreamEvent[] = [];
@@ -508,8 +604,7 @@ export class ResponsesService extends BaseService {
 
       // 4. Start execution in background
       let finalState: AgentState | undefined;
-      const executionPromise = agentRuntimeService
-        .executeSync(operationId)
+      const executionPromise = executeResponseRun(agentRuntimeService, run)
         .then((state) => {
           finalState = state;
         })
@@ -797,17 +892,16 @@ export class ResponsesService extends BaseService {
         ? this.extractOutputItems(finalState, responseId)
         : { output: [], outputText: accumulatedText };
 
-      // Determine if agent was interrupted for client tool execution
-      const isClientToolInterrupt =
-        finalState?.status === 'waiting_for_async_tool' &&
-        finalState?.interruption?.reason === 'client_tool_execution';
+      // Determine if the agent stopped to wait on tools (the caller's, or a mixed batch)
+      const parkedReason = parkedOnToolsReason(finalState);
+      const isClientToolInterrupt = !!parkedReason;
 
       if (isClientToolInterrupt) {
         yield {
           response: {
             ...response,
             completed_at: null,
-            incomplete_details: { reason: 'client_tool_execution' },
+            incomplete_details: { reason: parkedReason },
             output: fullOutput.output,
             output_text: fullOutput.outputText || accumulatedText,
             status: 'incomplete' as any,
@@ -849,7 +943,7 @@ export class ResponsesService extends BaseService {
       const errorResponse = this.buildResponseObject({
         createdAt,
         error: {
-          code: 'server_error',
+          code: error instanceof ClientToolResumeError ? 'invalid_request_error' : 'server_error',
           message: error instanceof Error ? error.message : 'Unknown error',
         },
         id: errorResponseId,
@@ -899,7 +993,7 @@ export class ResponsesService extends BaseService {
   private buildResponseObject(opts: {
     completedAt?: number | null;
     createdAt: number;
-    error?: { code: 'server_error'; message: string };
+    error?: ResponseError;
     id: string;
     incompleteDetails?: { reason: string };
     output: OutputItem[];

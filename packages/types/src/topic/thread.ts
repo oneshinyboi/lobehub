@@ -44,6 +44,13 @@ export interface ThreadMetadata {
   /** Error details when task failed */
   error?: any;
   /**
+   * Native session of the external agent (Claude Code, Codex, …) that runs in
+   * this isolation thread. Kept per thread rather than on the topic, so a
+   * follow-up to that sub-agent resumes its own session and two external
+   * sub-agents in one conversation never share one.
+   */
+  heteroSessionId?: string;
+  /**
    * Model the subagent ran on (e.g. CC's per-turn `message.model`). Pinned
    * once for the run and rolled up here on finalize so historical / cold-load
    * viewers can surface it (e.g. the subagent inspector chip tooltip) without
@@ -54,6 +61,15 @@ export interface ThreadMetadata {
   onboardingUnderstanding?: OnboardingUnderstandingThreadMarker;
   /** Operation ID for tracking */
   operationId?: string;
+  /**
+   * Usage of the runs before the current one, fixed when the run claims the
+   * thread. The `total*` fields can't serve as this baseline: status polling
+   * rewrites them while the run is live.
+   */
+  runUsageBaseline?: Pick<
+    ThreadMetadata,
+    'totalCost' | 'totalLlmCalls' | 'totalTokens' | 'totalToolCalls'
+  >;
   /**
    * The specific tool_use id within `sourceMessageId` that spawned this thread.
    * Used to position the thread inline as a `task` block within the parent
@@ -68,8 +84,18 @@ export interface ThreadMetadata {
   subagentType?: string;
   /** Total cost in dollars */
   totalCost?: number;
+  /**
+   * Total LLM calls made (user-facing step metric).
+   *
+   * Versioned baseline for continuation runs: legacy threads only have
+   * `totalSteps` in execution-step units, so that value must not be reused to
+   * accumulate LLM calls.
+   */
+  totalLlmCalls?: number;
   /** Total messages created during execution */
   totalMessages?: number;
+  /** Total LLM calls made (user-facing step metric) */
+  totalSteps?: number;
   /** Total tokens consumed */
   totalTokens?: number;
   /** Total tool calls made */
@@ -132,8 +158,10 @@ export const threadMetadataSchema = z.object({
   startedAt: z.string().optional(),
   subagentType: z.string().optional(),
   totalCost: z.number().optional(),
+  totalLlmCalls: z.number().optional(),
   totalMessages: z.number().optional(),
   totalTokens: z.number().optional(),
+  totalSteps: z.number().optional(),
   totalToolCalls: z.number().optional(),
 });
 

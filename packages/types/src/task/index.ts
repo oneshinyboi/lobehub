@@ -1,7 +1,11 @@
 import type { BriefArtifacts } from '../brief';
 import type { ChatFileItem } from '../message/ui/chat';
+import type { TaskLabelRef } from './label';
 
+export * from './archive';
 export * from './execution';
+export * from './label';
+export * from './listFilter';
 
 // ── Task type aliases ──
 
@@ -120,11 +124,21 @@ export interface TaskInstructionSynthesis {
 
 // ── Config types ──
 
+/** Stable identity with the label snapshot written to the legacy selection. */
+export interface CheckpointTaskRef {
+  id: string;
+  identifier: string;
+}
+
 export interface CheckpointConfig {
   onAgentRequest?: boolean;
   tasks?: {
+    /** Persisted identifiers for old readers; write boundaries accept TaskRefs. */
     afterIds?: string[];
+    afterTasks?: CheckpointTaskRef[];
+    /** Persisted identifiers for old readers; write boundaries accept TaskRefs. */
     beforeIds?: string[];
+    beforeTasks?: CheckpointTaskRef[];
   };
   topic?: {
     after?: boolean;
@@ -224,7 +238,8 @@ export interface TaskTopicHandoff {
    */
   briefDecision?: BriefDecision;
   /**
-   * Raw last assistant message of the run, captured on completion.
+   * Raw output of the run, captured on completion: its last assistant message,
+   * or its earlier report when that message was only a trailing remark.
    * Shown on the run card alongside the LLM-synthesized `summary` so the feed
    * surfaces the actual run output, not only the summary.
    */
@@ -237,14 +252,26 @@ export interface TaskTopicHandoff {
 
 // ── Task context (runtime state pockets stored in tasks.context JSONB) ──
 
+/**
+ * Consecutive automation-tick failures after which a recurring task stops: a
+ * schedule is paused, a heartbeat is no longer re-armed. One transient upstream
+ * hiccup (429 / network / upstream 500) must not stop a recurring task for
+ * good; only this many in a row do. Shared so the scheduled tasks table reads
+ * "stopped" off the same number the lifecycle acts on.
+ */
+export const TASK_AUTOMATION_FAILURE_FUSE = 3;
+
 export interface TaskSchedulerContext {
   // Count of consecutive automation-tick 'error' reasons since the last 'done'.
-  // When it hits the fuse threshold (currently 3) we pause the task / stop
+  // When it hits `TASK_AUTOMATION_FAILURE_FUSE` we pause the task / stop
   // re-arming until the user resolves the urgent brief. Manual "run now"
   // failures do NOT touch this counter.
   consecutiveFailures?: number;
   // ISO timestamp when the latest tick was scheduled. Informational only.
   scheduledAt?: string;
+  // ISO timestamp opening the current schedule window: `maxExecutions` counts
+  // schedule runs since it, and the dispatcher never fires an earlier occurrence.
+  scheduleStartedAt?: string;
   // QStash messageId (or LocalScheduler scheduleId) for the next tick. Used to
   // cancel when the user wants an interval change to take effect immediately.
   tickMessageId?: string;
@@ -327,6 +354,8 @@ export interface TaskSubtaskProgress {
 
 export interface TaskItem {
   accessedAt: Date;
+  /** Set when the user archives the task; archived tasks are hidden from lists by default. */
+  archivedAt: Date | null;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
   automationMode: TaskAutomationMode | null;
@@ -345,6 +374,8 @@ export interface TaskItem {
   id: string;
   identifier: string;
   instruction: string;
+  /** Labels on the task, attached by task list and detail reads. */
+  labels?: TaskLabelRef[];
   lastHeartbeatAt: Date | null;
   maxTopics: number | null;
   name: string | null;
@@ -370,12 +401,37 @@ export interface TaskItem {
   workspaceId: string | null;
 }
 
+/**
+ * One run of a task as a list row shows it: enough to draw the outcome strip
+ * of a recurring task and to open the run, nothing more.
+ */
+export interface TaskRecentRun {
+  /** When the run's topic finished; null while it is still going. */
+  completedAt: Date | null;
+  createdAt: Date;
+  seq: number;
+  /** `task_topics.status`: 'running', 'completed', 'failed', 'timeout', 'canceled', … */
+  status: string;
+  topicId: string | null;
+  /** Null for runs recorded before the trigger was tracked. */
+  trigger: TaskRunTrigger | null;
+}
+
 export type TaskListItem = TaskItem & {
+  /**
+   * The task has an unresolved urgent brief, so its schedule and heartbeat
+   * ticks are skipped until the user answers. Only set when the list was asked
+   * for `recentRuns`.
+   */
+  awaitingHuman?: boolean;
   participants: TaskParticipant[];
+  /** Latest runs, newest first. Only set when the list was asked for `recentRuns`. */
+  recentRuns?: TaskRecentRun[];
 };
 
 export interface NewTask {
   accessedAt?: Date;
+  archivedAt?: Date | null;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
   automationMode?: TaskAutomationMode | null;
@@ -426,16 +482,37 @@ export interface TaskDetailSubtaskRunningTopic {
   operationId?: string | null;
 }
 
+/**
+ * Why the server refused to move a task into or out of a project. Sent as
+ * `errorData.projectMoveRefusal` on the BAD_REQUEST, so the client can say what
+ * blocks the move instead of one generic message.
+ */
+export type TaskProjectMoveRefusal =
+  /** A dependency would link tasks in different projects. */
+  | 'external_dependency'
+  /** A subtask of the tree already belongs to a project. */
+  | 'filed_subtask'
+  /** The task already belongs to a project, so its tree cannot move as a whole. */
+  | 'filed_task'
+  /** The task is a subtask; it shares its parent's project. */
+  | 'has_parent'
+  /** Moving only this task would split it from its subtasks. */
+  | 'split_subtasks';
+
 export interface TaskDetailSubtask {
+  /** ISO time the subtask was archived; null when it is not archived. */
+  archivedAt?: string | null;
   assignee?: TaskDetailSubtaskAssignee | null;
   /** Human assignee (workspace member). Coexists with `assignee` (agent). */
   assigneeUserId?: string | null;
   automationMode?: TaskAutomationMode | null;
   blockedBy?: string;
+  blockedById?: string;
   children?: TaskDetailSubtask[];
   /** Creator of the subtask; with `visibility`, gates who it can be assigned to. */
   createdByUserId?: string;
   heartbeat?: { interval?: number | null };
+  id?: string;
   identifier: string;
   name?: string | null;
   priority?: number | null;
@@ -596,6 +673,8 @@ export interface TaskRunVerifySummary {
 export interface TaskDetailData {
   activities?: TaskDetailActivity[];
   agentId?: string | null;
+  /** ISO time the user archived the task; null when it is not archived. */
+  archivedAt?: string | null;
   // null/undefined = no automation configured
   automationMode?: TaskAutomationMode | null;
   checkpoint?: CheckpointConfig;
@@ -603,7 +682,7 @@ export interface TaskDetailData {
   createdAt?: string;
   /** Creator of the task; used by the UI to gate creator-only actions (e.g. make private). */
   createdByUserId?: string | null;
-  dependencies?: Array<{ dependsOn: string; type: string }>;
+  dependencies?: Array<{ dependsOn: string; dependsOnId?: string; type: string }>;
   description?: string | null;
   /** Rich-editor JSON state for the instruction; preserves details markdown drops (image size, etc.). */
   editorData?: unknown;
@@ -624,9 +703,12 @@ export interface TaskDetailData {
   id?: string;
   identifier: string;
   instruction: string;
+  labels?: TaskLabelRef[];
   name?: string | null;
-  parent?: { agentId?: string | null; identifier: string; name: string | null } | null;
+  parent?: { id?: string; agentId?: string | null; identifier: string; name: string | null } | null;
   priority?: number | null;
+  /** The project this task is filed under; null when it has none. */
+  projectId?: string | null;
   schedule?: {
     maxExecutions?: number | null;
     pattern?: string | null;
