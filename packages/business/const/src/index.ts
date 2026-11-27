@@ -8,6 +8,21 @@ export * from './url';
 export const ENABLE_BUSINESS_FEATURES = false;
 
 /**
+ * Whether the UI exposes topic link sharing (copy/share a Topic URL).
+ *
+ * Link sharing is fully implemented in OSS — the `share` lambda router, the
+ * `TopicShareModel` and the public `/share` viewers — so only the entry points
+ * are gated. This fork wants those entries on while the rest of the business
+ * build stays off.
+ *
+ * It is deliberately separate from `ENABLE_BUSINESS_FEATURES`: that flag also
+ * gates payments-adjacent surfaces (credits, plans, sandbox storage overage),
+ * so flipping it to enable sharing would turn those on as well. Every consumer
+ * reads this constant instead of hardcoding its own value.
+ */
+export const ENABLE_TOPIC_LINK_SHARE = true;
+
+/**
  * Whether Settings → Tools (per-user search provider / crawler ordering) is
  * exposed. The server still honors preferences already saved; this only
  * controls the entry. Distributions can turn it off while the feature is not

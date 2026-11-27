@@ -1,5 +1,6 @@
 'use client';
 
+import { ENABLE_TOPIC_LINK_SHARE } from '@lobechat/business-const';
 import { ActionIcon, DropdownMenu } from '@lobehub/ui';
 import { MoreHorizontal } from 'lucide-react';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
@@ -16,7 +17,7 @@ import { useMenu } from './useMenu';
 const HeaderActions = memo(() => {
   const { agentId, topicId } = useAgentContext();
   const workspaceId = useActiveWorkspaceId();
-  const enableTopicLinkShare = true;
+  const enableTopicLinkShare = ENABLE_TOPIC_LINK_SHARE;
   const { allowed: canShare } = usePermission('edit_own_content');
   const { openShareModal } = useShareModal();
 

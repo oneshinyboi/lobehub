@@ -1,5 +1,6 @@
 'use client';
 
+import { ENABLE_TOPIC_LINK_SHARE } from '@lobechat/business-const';
 import { AGENT_CHAT_TOPIC_URL } from '@lobechat/const';
 import type { ConversationContext, TaskDetailActivity } from '@lobechat/types';
 import type { DropdownItem } from '@lobehub/ui';
@@ -210,7 +211,7 @@ const TopicChatDrawer = memo<TopicChatDrawerProps>(({ defaultExpanded = false })
     handledFocusRequestRef.current = inputFocusRequest;
     if (showArtifactPortal) closeHostedPortal();
   }, [closeHostedPortal, inputFocusRequest, showArtifactPortal]);
-  const enableTopicLinkShare = true;
+  const enableTopicLinkShare = ENABLE_TOPIC_LINK_SHARE;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
   const { allowed: canEditTask } = usePermission('create_content');
   const appOrigin = useAppOrigin();

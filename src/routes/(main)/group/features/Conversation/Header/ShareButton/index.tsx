@@ -1,5 +1,6 @@
 'use client';
 
+import { ENABLE_TOPIC_LINK_SHARE } from '@lobechat/business-const';
 import { ActionIcon } from '@lobehub/ui';
 import { Share2 } from 'lucide-react';
 import { memo } from 'react';
@@ -26,7 +27,7 @@ const ShareButton = memo<ShareButtonProps>(({ mobile, setOpen, open }) => {
   // topic-share policy is read off that agent — same resolution the group's
   // messages and topics are written with.
   const { agentId, topicId: activeTopicId } = useGroupContext();
-  const enableTopicLinkShare = true;
+  const enableTopicLinkShare = ENABLE_TOPIC_LINK_SHARE;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
   const headerActionSize = useHeaderActionSize();
 

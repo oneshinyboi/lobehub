@@ -1,5 +1,6 @@
 'use client';
 
+import { ENABLE_TOPIC_LINK_SHARE } from '@lobechat/business-const';
 import { ActionIcon } from '@lobehub/ui';
 import { Share2 } from 'lucide-react';
 import { memo } from 'react';
@@ -24,7 +25,7 @@ const ShareButton = memo<ShareButtonProps>(({ mobile, setOpen, open }) => {
   const { openShareModal } = useShareModal({ open, setOpen });
   const { t } = useTranslation('common');
   const { agentId, topicId } = useAgentContext();
-  const enableTopicLinkShare = true;
+  const enableTopicLinkShare = ENABLE_TOPIC_LINK_SHARE;
   const { allowed: canShare, reason } = usePermission('edit_own_content');
   const workspaceId = useActiveWorkspaceId();
   const headerActionSmallSize = useHeaderActionSize(true);
