@@ -8,8 +8,10 @@ import {
   wsCompatProcedure,
 } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { getServerDB } from '@/database/core/db-adaptor';
+import { UserModel } from '@/database/models/user';
 import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import { router } from '@/libs/trpc/lambda';
+import { getWorkspaceMemberName } from '@/utils/workspaceMemberName';
 
 /** A membership row joined with the public profile of the member. */
 export interface WorkspaceMemberSummary extends WorkspaceMemberItem {
@@ -71,8 +73,9 @@ const workspaceIdOf = (ctx: { workspaceId?: string | null }): string => {
 };
 
 // Cloud overrides this at the same path with the real workspaceMemberRouter.
-// The invitation procedures are implemented here on top of the data layer;
-// unbuilt surfaces keep the stub contract so existing callers still type-check.
+// The invitation flows, the member directory and the link-invite management are
+// implemented here on top of the data layer; `updateProfile` keeps the stub
+// contract so an unbuilt surface still type-checks.
 export const workspaceMemberRouter = router({
   /**
    * Legacy invite entry point (the CLI's `workspace invite`). It never sends
@@ -100,7 +103,47 @@ export const workspaceMemberRouter = router({
 
   list: wsCompatProcedure
     .input(z.object({ includeDeleted: z.boolean().optional() }).optional())
-    .query(async (): Promise<WorkspaceMemberSummary[]> => []),
+    .query(async ({ ctx, input }): Promise<WorkspaceMemberSummary[]> => {
+      // An unscoped call is personal mode, which has no member directory — the
+      // client hooks skip the request entirely, and a direct caller reads empty
+      // rather than an error. With a header, `cloudWorkspaceAuth` has already
+      // proved active membership (CONTEXT.md I3).
+      const workspaceId = ctx.workspaceId;
+      if (!workspaceId) return [];
+
+      const db = await getServerDB();
+      const members = await new WorkspaceMemberModel(db, ctx.userId!).listMembers(workspaceId, {
+        includeDeleted: input?.includeDeleted,
+      });
+
+      // One batch lookup rather than a join in the model: the member list is
+      // small and the profile columns are the only user fields the directory
+      // exposes (never settings or key vaults).
+      const profiles = await UserModel.findByIds(
+        db,
+        members.map((member) => member.userId),
+      );
+      const profileById = new Map(
+        profiles.map((user) => [
+          user.id,
+          {
+            avatar: user.avatar,
+            email: user.email,
+            fullName: user.fullName,
+            username: user.username,
+          },
+        ]),
+      );
+
+      return members
+        .map((member) => ({ ...member, user: profileById.get(member.userId) ?? null }))
+        .sort((a, b) => {
+          // Same nickname-first name the UI renders, so the CLI's table and a
+          // picker list people in the same order.
+          const byName = getWorkspaceMemberName(a).localeCompare(getWorkspaceMemberName(b));
+          return byName === 0 ? a.userId.localeCompare(b.userId) : byName;
+        });
+    }),
 
   /** Pending single-use invitations (link-only: no mail has been sent). */
   listInvitations: wsCompatAdminProcedure.query(
