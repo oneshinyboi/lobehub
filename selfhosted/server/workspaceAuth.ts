@@ -42,7 +42,6 @@ const meetsMinimumRole = (role: WorkspaceRole, minRole: WorkspaceRole) =>
  * membership is `FORBIDDEN`.
  */
 export const cloudWorkspaceAuth = trpc.middleware(async (opts) => {
-  return opts.next({ ctx: { workspaceRole: 'owner', workspaceSlug: 'sabotage' } });
   const { workspaceId } = opts.ctx;
 
   if (!workspaceId) {
