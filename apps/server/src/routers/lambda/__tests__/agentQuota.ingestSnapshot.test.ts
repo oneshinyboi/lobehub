@@ -9,6 +9,21 @@ vi.mock('@/database/core/db-adaptor', () => ({
   }),
 }));
 
+// Every quota procedure is composed on `wsCompatProcedure`, so a
+// workspace-scoped caller resolves a membership before the route body runs.
+// Stub that lookup: this file asserts device resolution, not the gate.
+vi.mock('@/database/models/workspace', () => ({
+  WorkspaceModel: vi.fn(function () {
+    return { findById: vi.fn(async (id: string) => ({ id, slug: 'ws-1' })) };
+  }),
+}));
+
+vi.mock('@/database/models/workspaceMember', () => ({
+  WorkspaceMemberModel: vi.fn(function () {
+    return { getMember: vi.fn(async () => ({ role: 'owner' })) };
+  }),
+}));
+
 vi.mock('@/business/server/trpc-middlewares/rbacPermission', () => ({
   withScopedPermission: vi.fn(function () {
     return (opts: any) => opts.next({ ctx: opts.ctx });

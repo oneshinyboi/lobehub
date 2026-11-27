@@ -524,6 +524,11 @@ export const WORKSPACE_SCOPED_SOURCES: WorkspaceScopedSource[] = [
     uses: ['wsCompatProcedure'],
   },
   {
+    file: 'selfhosted/server/routers/agentQuota.ts',
+    routerPath: 'agentQuota',
+    uses: ['wsCompatProcedure'],
+  },
+  {
     file: 'selfhosted/server/routers/workspaceMember.ts',
     routerPath: 'workspaceMember',
     uses: ['wsCompatProcedure'],
